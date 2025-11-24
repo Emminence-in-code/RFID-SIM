@@ -1,17 +1,17 @@
-import React, { useEffect, useState } from 'react';
-import { HashRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
-import { Layout } from './components/Layout';
-import { AuthPage } from './pages/Auth';
-import { Dashboard } from './pages/Dashboard';
-import { StudentsPage } from './pages/Students';
-import { LecturersPage } from './pages/Lecturers';
-import { CoursesPage } from './pages/Courses';
-import { AttendancePage } from './pages/Attendance';
-import { LiveConsole } from './pages/LiveConsole';
-import { HardwareSimulator } from './pages/HardwareSimulator';
-import { SetupPage } from './pages/Setup';
-import { getSupabase, hasSupabaseConfig } from './supabaseClient';
-import { Loader2 } from 'lucide-react';
+import React, { useEffect, useState } from "react";
+import { HashRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+import { Layout } from "./components/Layout";
+import { AuthPage } from "./pages/Auth";
+import { Dashboard } from "./pages/Dashboard";
+import { StudentsPage } from "./pages/Students";
+import { LecturersPage } from "./pages/Lecturers";
+import { CoursesPage } from "./pages/Courses";
+import { AttendancePage } from "./pages/Attendance";
+import { LiveConsole } from "./pages/LiveConsole";
+import { HardwareSimulator } from "./pages/HardwareSimulator";
+// import { SetupPage } from "./pages/Setup";
+import { getSupabase, hasSupabaseConfig } from "./supabaseClient";
+import { Loader2 } from "lucide-react";
 
 // Protected Route Guard
 const ProtectedRoute = () => {
@@ -31,7 +31,9 @@ const ProtectedRoute = () => {
 
       const supabase = getSupabase();
       if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         setAuthenticated(!!session);
       }
       setLoading(false);
@@ -61,9 +63,9 @@ const App: React.FC = () => {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/setup" element={<SetupPage />} />
+        {/* <Route path="/setup" element={<SetupPage />} /> */}
         <Route path="/login" element={<AuthPage />} />
-        
+
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/live" element={<LiveConsole />} />
@@ -72,7 +74,8 @@ const App: React.FC = () => {
           <Route path="/students" element={<StudentsPage />} />
           <Route path="/lecturers" element={<LecturersPage />} />
           <Route path="/courses" element={<CoursesPage />} />
-          <Route path="/settings" element={<SetupPage />} /> {/* Reuse setup as settings */}
+          {/* <Route path="/settings" element={<SetupPage />} />{" "} */}
+          {/* Reuse setup as settings */}
         </Route>
 
         <Route path="*" element={<Navigate to="/" />} />
