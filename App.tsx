@@ -10,9 +10,10 @@ import { AttendancePage } from "./pages/Attendance";
 import { LiveConsole } from "./pages/LiveConsole";
 import { HardwareSimulator } from "./pages/HardwareSimulator";
 // import { SetupPage } from "./pages/Setup";
-import { getSupabase, hasSupabaseConfig } from "./supabaseClient";
+import { getSupabase, hasSupabaseConfig, initSupabase } from "./supabaseClient";
 import { Loader2 } from "lucide-react";
 
+initSupabase();
 // Protected Route Guard
 const ProtectedRoute = () => {
   const [loading, setLoading] = useState(true);
@@ -20,6 +21,7 @@ const ProtectedRoute = () => {
   const [configured, setConfigured] = useState(false);
 
   useEffect(() => {
+    initSupabase();
     const checkAuth = async () => {
       const isConfigured = hasSupabaseConfig();
       setConfigured(isConfigured);
