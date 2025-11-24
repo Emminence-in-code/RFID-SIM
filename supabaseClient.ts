@@ -4,11 +4,16 @@ import { SupabaseConfig } from './types';
 // Singleton instance
 let supabaseInstance: SupabaseClient | null = null;
 
-// Get config from Vite env
+// Fallback credentials in case .env is not loaded by the environment
+const FALLBACK_URL = "https://ynemvstppbexmuhifddd.supabase.co";
+const FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InluZW12c3RwcGJleG11aGlmZGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4OTIyNDAsImV4cCI6MjA3OTQ2ODI0MH0.WvsSSJkXzwZnjVgvNwMCxh9fFxdzHWY4SVddrdfACmI";
+
+// Get config from Vite env or Fallback
 const getEnvConfig = (): SupabaseConfig => {
-  const url = import.meta.env.VITE_SUPABASE_URL;
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
-  console.log('Loaded Supabase Config from .env:', { url, key });
+  // Use optional chaining to prevent crash if import.meta.env is undefined
+  const url = (import.meta as any).env?.VITE_SUPABASE_URL || FALLBACK_URL;
+  const key = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || FALLBACK_KEY;
+  
   return { url, key };
 };
 
@@ -20,24 +25,28 @@ export const getSupabase = (): SupabaseClient | null => {
 // Initializes if not already
 export const initSupabase = (config?: SupabaseConfig): SupabaseClient => {
   if (!supabaseInstance) {
-    if (!config) config = getEnvConfig();
-    supabaseInstance = createClient(config.url, config.key);
-    console.log("Supabase client initialized.");
-  } else {
-    console.log("Supabase client already initialized.");
+    const conf = config || getEnvConfig();
+    
+    if (conf.url && conf.key) {
+      try {
+        supabaseInstance = createClient(conf.url, conf.key);
+        console.log("Supabase client initialized successfully.");
+      } catch (e) {
+        console.error("Failed to initialize Supabase client:", e);
+      }
+    } else {
+      console.warn("Supabase credentials missing. Client not initialized.");
+    }
   }
-  return supabaseInstance;
+  return supabaseInstance!;
 };
 
 // Check config; DON'T re-init here
 export const hasSupabaseConfig = (): boolean => {
   const config = getEnvConfig();
-  const valid = !!(config.url && config.key);
-  // Don't call initSupabase here for a pure check
-  return valid;
+  return !!(config.url && config.key);
 };
 
-// For frontend .env, do NOT use save/clear (only for dev/testing)
 export const saveSupabaseConfig = (config: SupabaseConfig) => {
   supabaseInstance = createClient(config.url, config.key);
 };

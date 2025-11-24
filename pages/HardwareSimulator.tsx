@@ -1,37 +1,30 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Power, Wifi, Radio, Zap, Settings, Play, Square, CreditCard, RefreshCw } from 'lucide-react';
+import { Radio, CreditCard, Play, Square, Settings, RefreshCw, Power } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { Course, Lecturer, Student } from '../types';
 
 export const HardwareSimulator: React.FC = () => {
   const supabase = getSupabase();
-  const [loading, setLoading] = useState(true);
   
   // Data State
   const [courses, setCourses] = useState<Course[]>([]);
   const [lecturers, setLecturers] = useState<Lecturer[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   
-  // Setup State
+  // Device State
   const [selectedLecturer, setSelectedLecturer] = useState('');
   const [selectedCourse, setSelectedCourse] = useState('');
-  
-  // Device State
-  const [deviceState, setDeviceState] = useState<'off' | 'standby' | 'active' | 'error'>('standby');
+  const [deviceState, setDeviceState] = useState<'booting' | 'standby' | 'active' | 'error'>('booting');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [oledLines, setOledLines] = useState<string[]>(['> SYSTEM READY', '> WAITING FOR CONFIG']);
-  const [leds, setLeds] = useState({ power: true, net: false, act: false });
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [oledLines, setOledLines] = useState<string[]>(['> SYSTEM BOOT', '> CHECKING NET...']);
+  const [leds, setLeds] = useState({ pwr: true, net: false, read: false });
 
-  // --- Initialization ---
+  // Init
   useEffect(() => {
     const init = async () => {
       if (!supabase) return;
+      setTimeout(() => setLeds(prev => ({...prev, net: true})), 1000);
       
-      // Simulate network boot
-      setTimeout(() => setLeds(prev => ({ ...prev, net: true })), 1500);
-
       const [cRes, lRes, sRes, sessionRes] = await Promise.all([
         supabase.from('courses').select('*'),
         supabase.from('lecturers').select('*'),
@@ -43,297 +36,211 @@ export const HardwareSimulator: React.FC = () => {
       if (lRes.data) setLecturers(lRes.data as any);
       if (sRes.data) setStudents(sRes.data as any);
 
-      // Restore session if exists
       if (sessionRes.data) {
         setActiveSessionId(sessionRes.data.id);
         setSelectedCourse(sessionRes.data.course_id);
-        setSelectedLecturer(sessionRes.data.lecturer_id);
         setDeviceState('active');
-        updateOled(['> SESSION RESTORED', '> READY TO SCAN']);
+        setOledLines(['> SESSION ACTIVE', '> READY TO SCAN']);
+      } else {
+        setDeviceState('standby');
+        setOledLines(['> SYSTEM READY', '> AWAITING CONFIG']);
       }
-
-      setLoading(false);
     };
     init();
   }, [supabase]);
 
-  // --- Logic ---
-
-  const updateOled = (lines: string[]) => {
-    setOledLines(lines);
+  // Actions
+  const updateScreen = (lines: string[]) => setOledLines(lines);
+  const blinkRead = () => {
+    setLeds(prev => ({...prev, read: true}));
+    setTimeout(() => setLeds(prev => ({...prev, read: false})), 300);
   };
 
-  const blinkLed = (led: 'net' | 'act', duration = 200) => {
-    setLeds(prev => ({ ...prev, [led]: true }));
-    setTimeout(() => setLeds(prev => ({ ...prev, [led]: false })), duration);
-  };
-
-  const handleStartSession = async () => {
-    if (!supabase || !selectedCourse || !selectedLecturer) return;
+  const startSession = async () => {
+    if (!supabase || !selectedCourse) return;
+    updateScreen(['> INITIALIZING...', '> CONTACTING DB']);
     
-    setIsProcessing(true);
-    updateOled(['> INITIALIZING...', '> CONTACTING SERVER']);
-    blinkLed('net', 1000);
-
-    // Stop any existing
+    // Stop previous
     await supabase.from('sessions').update({ is_active: false }).eq('is_active', true);
-
-    const { data, error } = await supabase.from('sessions').insert({
-      course_id: selectedCourse,
-      lecturer_id: selectedLecturer,
-      start_time: new Date().toISOString(),
-      is_active: true
+    
+    const { data } = await supabase.from('sessions').insert({
+        course_id: selectedCourse,
+        lecturer_id: selectedLecturer || courses.find(c => c.id === selectedCourse)?.lecturer_id,
+        start_time: new Date().toISOString(),
+        is_active: true
     }).select().single();
 
-    setIsProcessing(false);
-
-    if (error) {
-      console.error("Session Start Error:", error);
-      updateOled(['> ERROR: INIT FAILED', `> ${error.code || 'UNKNOWN'}`]);
-      setDeviceState('error');
-    } else {
-      setActiveSessionId(data.id);
-      setDeviceState('active');
-      const courseCode = courses.find(c => c.id === selectedCourse)?.code || 'UNK';
-      updateOled(['> SESSION ACTIVE', `> COURSE: ${courseCode}`, '> READY FOR INPUT']);
+    if (data) {
+        setActiveSessionId(data.id);
+        setDeviceState('active');
+        updateScreen(['> SESSION STARTED', '> READY TO SCAN']);
     }
   };
 
-  const handleStopSession = async () => {
+  const stopSession = async () => {
     if (!supabase || !activeSessionId) return;
-    
-    setIsProcessing(true);
-    updateOled(['> TERMINATING...', '> UPLOADING LOGS']);
-    blinkLed('net', 1000);
-
-    await supabase.from('sessions').update({ 
-      is_active: false,
-      end_time: new Date().toISOString()
-    }).eq('id', activeSessionId);
-
+    updateScreen(['> TERMINATING...']);
+    await supabase.from('sessions').update({ is_active: false, end_time: new Date().toISOString() }).eq('id', activeSessionId);
     setActiveSessionId(null);
     setDeviceState('standby');
-    setIsProcessing(false);
-    updateOled(['> SESSION ENDED', '> SYSTEM STANDBY']);
+    updateScreen(['> SESSION ENDED', '> STANDBY MODE']);
   };
 
-  const handleScan = async (student: Student) => {
-    if (!supabase || !activeSessionId || isProcessing) return;
+  const scanTag = async (student: Student) => {
+    if (!supabase || deviceState !== 'active' || !activeSessionId) return;
     
-    setIsProcessing(true);
-    blinkLed('act', 500);
-    updateOled(['> READING TAG...', `> ID: ${student.rfid_tag || 'UNKNOWN'}`]);
-
-    // Artificial delay for realism
+    blinkRead();
+    updateScreen(['> READING TAG...', `> ID: ${student.rfid_tag?.slice(0,6) || 'UNK'}`]);
+    
+    // Fake delay
     await new Promise(r => setTimeout(r, 600));
 
-    // Attempt Insert
     const { error } = await supabase.from('attendance_logs').insert({
-      session_id: activeSessionId,
-      student_id: student.id,
-      course_id: selectedCourse,
-      status: 'present'
+        session_id: activeSessionId,
+        student_id: student.id,
+        course_id: selectedCourse,
+        status: 'present'
     });
 
     if (error) {
-      setDeviceState('error');
-      if (error.code === '23505') { // Postgres duplicate key error
-        updateOled(['> ERROR: DUPLICATE', '> ALREADY LOGGED']);
-      } else {
-        console.error("Scan Error:", error);
-        updateOled(['> SYSTEM ERROR', `> CODE: ${error.code}`]);
-      }
-      
-      // Play error sound effect visual
-      setTimeout(() => {
-        setDeviceState('active');
-        const courseCode = courses.find(c => c.id === selectedCourse)?.code || 'UNK';
-        updateOled(['> SESSION ACTIVE', `> COURSE: ${courseCode}`]);
-      }, 2000);
+        if (error.code === '23505') {
+             updateScreen(['> ERROR: DUPLICATE', '> ALREADY LOGGED']);
+        } else {
+             updateScreen(['> SYS ERROR', `> ${error.code}`]);
+        }
+        setDeviceState('error');
+        setTimeout(() => {
+          setDeviceState('active');
+          updateScreen(['> READY TO SCAN']);
+        }, 2000);
     } else {
-      updateOled(['> ID VERIFIED', `> ${student.first_name.toUpperCase()}`, '> ENTRY RECORDED']);
-      setTimeout(() => {
-        const courseCode = courses.find(c => c.id === selectedCourse)?.code || 'UNK';
-        updateOled(['> SESSION ACTIVE', `> COURSE: ${courseCode}`]);
-      }, 2000);
+        updateScreen(['> ACCESS GRANTED', `> ${student.first_name}`]);
+        setTimeout(() => {
+          updateScreen(['> READY TO SCAN']);
+        }, 2000);
     }
-    
-    setIsProcessing(false);
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 flex flex-col lg:flex-row text-slate-200 overflow-hidden font-sans">
-      
-      {/* --- LEFT: DEVICE SIMULATION --- */}
-      <div className="flex-1 flex items-center justify-center p-8 relative bg-gradient-to-br from-slate-900 to-slate-950">
-         {/* Background Grid */}
-         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:50px_50px]"></div>
-         
-         {/* THE DEVICE */}
-         <div className="relative w-full max-w-xl aspect-[4/3] bg-slate-800 rounded-3xl shadow-[0_50px_100px_-20px_rgba(0,0,0,0.7)] border border-slate-700/50 flex flex-col p-8 z-10 overflow-hidden">
-            
-            {/* Texture Overlay */}
-            <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/brushed-alum-dark.png')] opacity-50 mix-blend-overlay pointer-events-none"></div>
-            
-            {/* Top Branding / Screws */}
-            <div className="flex justify-between items-center mb-8 opacity-50">
-               <div className="w-3 h-3 rounded-full bg-slate-600 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.5),1px_1px_0_rgba(255,255,255,0.1)]"></div>
-               <div className="text-xs font-black tracking-[0.3em] text-slate-400">RFID-PRO MK-II</div>
-               <div className="w-3 h-3 rounded-full bg-slate-600 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.5),1px_1px_0_rgba(255,255,255,0.1)]"></div>
+    <div className="min-h-screen bg-neutral-900 flex items-center justify-center font-sans p-8">
+      <div className="flex gap-12 w-full max-w-6xl items-start">
+        
+        {/* PHYSICAL DEVICE */}
+        <div className="flex-1">
+            <div className="relative aspect-[4/5] max-w-[500px] mx-auto bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-8">
+                {/* Screw holes */}
+                <div className="absolute top-6 left-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
+                <div className="absolute top-6 right-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
+                <div className="absolute bottom-6 left-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
+                <div className="absolute bottom-6 right-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
+
+                {/* Header */}
+                <div className="flex justify-between items-center px-4">
+                    <div className="flex gap-2">
+                         <div className="text-[10px] font-bold text-neutral-500">PWR</div>
+                         <div className={`w-2 h-2 rounded-full ${leds.pwr ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-neutral-900'}`}></div>
+                    </div>
+                    <div className="font-mono font-bold text-neutral-600 tracking-widest text-xs">RFID-TERMINAL V2</div>
+                    <div className="flex gap-2">
+                         <div className="text-[10px] font-bold text-neutral-500">NET</div>
+                         <div className={`w-2 h-2 rounded-full ${leds.net ? 'bg-blue-500 shadow-[0_0_8px_#3b82f6]' : 'bg-neutral-900'}`}></div>
+                    </div>
+                </div>
+
+                {/* Screen */}
+                <div className="bg-black rounded-lg border-8 border-neutral-700 h-48 relative overflow-hidden p-4 shadow-[inset_0_0_20px_black]">
+                    <div className="font-mono text-green-500 text-lg leading-relaxed relative z-10">
+                        {oledLines.map((l,i) => <div key={i}>{l}</div>)}
+                    </div>
+                    {/* Scanlines */}
+                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[size:100%_4px] opacity-30 pointer-events-none"></div>
+                </div>
+
+                {/* Sensor Area */}
+                <div className="flex-1 bg-neutral-700 rounded-2xl border-2 border-neutral-600 shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center relative group">
+                    <Radio className={`w-24 h-24 text-neutral-500 transition-colors ${leds.read ? 'text-blue-400' : ''}`} />
+                    <div className="absolute bottom-4 text-xs font-bold text-neutral-500 tracking-widest">NFC TARGET AREA</div>
+                    {deviceState === 'active' && <div className="absolute inset-0 border-4 border-blue-500/20 rounded-2xl animate-pulse"></div>}
+                </div>
+
+                {/* Status Bar */}
+                <div className="h-2 bg-neutral-900 rounded-full overflow-hidden">
+                    <div className={`h-full transition-all duration-300 ${deviceState === 'active' ? 'bg-blue-500 w-full' : deviceState === 'error' ? 'bg-red-500 w-full' : 'bg-neutral-600 w-1/3'}`}></div>
+                </div>
             </div>
+        </div>
 
-            {/* Main Interface Area */}
-            <div className="flex-1 flex gap-8">
-               
-               {/* Left: OLED SCREEN */}
-               <div className="flex-1 bg-black rounded-xl border-4 border-slate-700 shadow-[inset_0_0_20px_rgba(0,0,0,1)] relative overflow-hidden flex flex-col p-4">
-                  {/* Screen Glare */}
-                  <div className="absolute top-0 right-0 w-full h-2/3 bg-gradient-to-b from-white/5 to-transparent skew-y-12 pointer-events-none"></div>
-                  
-                  {/* Content */}
-                  <div className="flex-1 font-digital text-green-500 text-lg leading-relaxed relative z-10">
-                     {oledLines.map((line, i) => (
-                       <div key={i} className="animate-pulse">{line}</div>
-                     ))}
-                     {isProcessing && <div className="mt-2 animate-pulse">_</div>}
-                  </div>
-
-                  {/* Scanlines */}
-                  <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[size:100%_4px] pointer-events-none opacity-50"></div>
-               </div>
-
-               {/* Right: Controls & LEDs */}
-               <div className="w-24 flex flex-col items-center gap-6 py-2">
-                  {/* Status LEDs */}
-                  <div className="space-y-3 w-full">
-                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                        <span>PWR</span>
-                        <div className={`w-3 h-3 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-300 ${leds.power ? 'bg-green-500 text-green-500' : 'bg-slate-700'}`}></div>
-                     </div>
-                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                        <span>NET</span>
-                        <div className={`w-3 h-3 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-100 ${leds.net ? 'bg-blue-500 text-blue-500' : 'bg-slate-700'}`}></div>
-                     </div>
-                     <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                        <span>ACT</span>
-                        <div className={`w-3 h-3 rounded-full shadow-[0_0_10px_currentColor] transition-colors duration-100 ${deviceState === 'error' ? 'bg-red-500 text-red-500' : leds.act ? 'bg-amber-500 text-amber-500' : 'bg-slate-700'}`}></div>
-                     </div>
-                  </div>
-
-                  {/* RFID Icon / Contact Point */}
-                  <div className="mt-auto w-20 h-20 rounded-full border-2 border-slate-600 flex items-center justify-center opacity-50 relative group">
-                     <Radio className="w-10 h-10 text-slate-500 group-hover:text-primary-400 transition-colors" />
-                     {deviceState === 'active' && (
-                       <div className="absolute inset-0 border-2 border-primary-500 rounded-full animate-ping opacity-20"></div>
-                     )}
-                  </div>
-               </div>
-            </div>
-
-            {/* Bottom Screws */}
-            <div className="flex justify-between items-center mt-8 opacity-50">
-               <div className="w-3 h-3 rounded-full bg-slate-600 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.5),1px_1px_0_rgba(255,255,255,0.1)]"></div>
-               <div className="w-3 h-3 rounded-full bg-slate-600 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.5),1px_1px_0_rgba(255,255,255,0.1)]"></div>
-            </div>
-         </div>
-      </div>
-
-      {/* --- RIGHT: CONFIG PANEL --- */}
-      <div className="w-full lg:w-96 bg-slate-900 border-l border-slate-800 flex flex-col z-20 shadow-2xl">
-         <div className="p-6 border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm">
-            <h2 className="text-xl font-bold flex items-center gap-3">
-               <Settings className="w-5 h-5 text-primary-500" /> 
-               <span>Device Config</span>
+        {/* CONFIG PANEL */}
+        <div className="w-80 bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
+            <h2 className="font-bold text-lg mb-6 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-neutral-400" /> Control Panel
             </h2>
-         </div>
-         
-         <div className="flex-1 overflow-y-auto p-6 space-y-8">
-            {/* Session Controls */}
-            <div className="space-y-4">
-               <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Session Parameters</h3>
-               
-               <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-400">Select Lecturer</label>
-                  <select 
-                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none transition-all disabled:opacity-50"
-                    value={selectedLecturer}
-                    onChange={(e) => setSelectedLecturer(e.target.value)}
-                    disabled={deviceState === 'active'}
-                  >
-                     <option value="">-- Choose Personnel --</option>
-                     {lecturers.map(l => (
-                       <option key={l.id} value={l.id}>{l.first_name} {l.last_name}</option>
-                     ))}
-                  </select>
-               </div>
 
-               <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-400">Select Course</label>
-                  <select 
-                     className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:ring-2 focus:ring-primary-500 focus:outline-none transition-all disabled:opacity-50"
-                     value={selectedCourse}
-                     onChange={(e) => setSelectedCourse(e.target.value)}
-                     disabled={deviceState === 'active'}
-                  >
-                     <option value="">-- Choose Protocol --</option>
-                     {courses.filter(c => !selectedLecturer || c.lecturer_id === selectedLecturer).map(c => (
-                       <option key={c.id} value={c.id}>{c.code} - {c.name}</option>
-                     ))}
-                  </select>
-               </div>
+            <div className="space-y-6">
+                <div>
+                    <label className="text-xs font-bold text-neutral-500 uppercase">Configuration</label>
+                    <div className="mt-2 space-y-3">
+                        <select 
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded p-2 text-sm"
+                            value={selectedLecturer}
+                            onChange={(e) => setSelectedLecturer(e.target.value)}
+                            disabled={deviceState === 'active'}
+                        >
+                            <option value="">Select Lecturer</option>
+                            {lecturers.map(l => <option key={l.id} value={l.id}>{l.first_name} {l.last_name}</option>)}
+                        </select>
+                        <select 
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded p-2 text-sm"
+                            value={selectedCourse}
+                            onChange={(e) => setSelectedCourse(e.target.value)}
+                            disabled={deviceState === 'active'}
+                        >
+                            <option value="">Select Course</option>
+                            {courses.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
+                        </select>
+                    </div>
+                </div>
 
-               {deviceState !== 'active' ? (
-                  <button 
-                    onClick={handleStartSession}
-                    disabled={!selectedCourse || !selectedLecturer || isProcessing}
-                    className="w-full py-3 bg-gradient-to-r from-green-600 to-green-500 text-white font-bold rounded-xl shadow-lg shadow-green-900/20 hover:shadow-green-500/30 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                     <Play className="w-4 h-4 fill-current" /> BOOT SESSION
-                  </button>
-               ) : (
-                  <button 
-                    onClick={handleStopSession}
-                    disabled={isProcessing}
-                    className="w-full py-3 bg-gradient-to-r from-red-600 to-red-500 text-white font-bold rounded-xl shadow-lg shadow-red-900/20 hover:shadow-red-500/30 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                     <Square className="w-4 h-4 fill-current" /> END SESSION
-                  </button>
-               )}
+                <div>
+                    {deviceState !== 'active' ? (
+                        <button 
+                            onClick={startSession}
+                            disabled={!selectedCourse}
+                            className="w-full bg-green-700 hover:bg-green-600 py-3 rounded font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                            <Play className="w-4 h-4 fill-current" /> BOOT SESSION
+                        </button>
+                    ) : (
+                        <button 
+                            onClick={stopSession}
+                            className="w-full bg-red-700 hover:bg-red-600 py-3 rounded font-bold text-sm flex items-center justify-center gap-2"
+                        >
+                            <Square className="w-4 h-4 fill-current" /> KILL SESSION
+                        </button>
+                    )}
+                </div>
+
+                <div className="border-t border-neutral-700 pt-6">
+                    <label className="text-xs font-bold text-neutral-500 uppercase mb-3 block">Test Cards (Click to Tap)</label>
+                    <div className="space-y-2">
+                        {students.map(s => (
+                            <button 
+                                key={s.id}
+                                onClick={() => scanTag(s)}
+                                disabled={deviceState !== 'active'}
+                                className="w-full bg-neutral-700 hover:bg-neutral-600 p-3 rounded flex items-center gap-3 text-left disabled:opacity-50"
+                            >
+                                <CreditCard className="w-4 h-4 text-neutral-400" />
+                                <div>
+                                    <div className="text-xs font-bold">{s.first_name} {s.last_name}</div>
+                                    <div className="text-[10px] text-neutral-400 font-mono">{s.student_id}</div>
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
             </div>
-
-            {/* Simulation Cards */}
-            {deviceState === 'active' && (
-              <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
-                 <div className="flex items-center justify-between">
-                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Test Subjects</h3>
-                    <RefreshCw className="w-3 h-3 text-slate-600 cursor-pointer hover:text-white" onClick={() => {/* refresh logic */}} />
-                 </div>
-                 <p className="text-xs text-slate-400">Tap a card to simulate an RFID scan.</p>
-                 
-                 <div className="grid grid-cols-1 gap-3">
-                    {students.map((student) => (
-                       <button
-                          key={student.id}
-                          onClick={() => handleScan(student)}
-                          disabled={isProcessing}
-                          className="group relative bg-slate-800 p-4 rounded-xl border border-slate-700 text-left hover:border-primary-500 hover:bg-slate-750 transition-all hover:-translate-y-1 active:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
-                       >
-                          <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
-                             <CreditCard className="w-12 h-12 -rotate-12" />
-                          </div>
-                          <div className="relative z-10">
-                             <div className="text-sm font-bold text-white">{student.first_name} {student.last_name}</div>
-                             <div className="text-xs text-slate-500 font-mono mt-1">{student.student_id}</div>
-                             <div className="text-[10px] text-primary-400 font-mono mt-2 flex items-center gap-1">
-                                <Wifi className="w-3 h-3" /> RFID: {student.rfid_tag?.substring(0, 8)}...
-                             </div>
-                          </div>
-                       </button>
-                    ))}
-                 </div>
-              </div>
-            )}
-         </div>
+        </div>
       </div>
     </div>
   );

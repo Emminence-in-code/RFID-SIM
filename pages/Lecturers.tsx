@@ -9,6 +9,7 @@ export const LecturersPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [current, setCurrent] = useState<Partial<Lecturer>>({});
   const supabase = getSupabase();
+  const isAdmin = localStorage.getItem('user_role') === 'admin';
 
   const fetchLecturers = async () => {
     if (!supabase) return;
@@ -40,17 +41,19 @@ export const LecturersPage: React.FC = () => {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Lecturers</h1>
-          <p className="text-slate-500 mt-1">Manage academic staff profiles.</p>
+          <p className="text-slate-500 mt-1">Academic staff directory.</p>
         </div>
-        <Button onClick={() => { setCurrent({}); setIsModalOpen(true); }}>
-          <Plus className="w-5 h-5 mr-2" />
-          Add Lecturer
-        </Button>
+        {isAdmin && (
+          <Button onClick={() => { setCurrent({}); setIsModalOpen(true); }}>
+            <Plus className="w-5 h-5 mr-2" />
+            Add Lecturer
+          </Button>
+        )}
       </div>
 
       <Card noPadding>
         <table className="min-w-full divide-y divide-slate-100">
-          <TableHeader headers={['Name', 'Email Address', 'Department', 'Actions']} />
+          <TableHeader headers={isAdmin ? ['Name', 'Email Address', 'Department', 'Actions'] : ['Name', 'Email Address', 'Department']} />
           <tbody className="bg-white divide-y divide-slate-50">
             {lecturers.map((lecturer) => (
               <tr key={lecturer.id} className="hover:bg-slate-50 transition-colors group">
@@ -68,16 +71,18 @@ export const LecturersPage: React.FC = () => {
                      {lecturer.department}
                    </span>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
-                  <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => { setCurrent(lecturer); setIsModalOpen(true); }} className="p-1.5 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
-                      <Edit2 className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => handleDelete(lecturer.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
+                {isAdmin && (
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right">
+                    <div className="flex justify-end space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={() => { setCurrent(lecturer); setIsModalOpen(true); }} className="p-1.5 text-primary-600 hover:bg-primary-50 rounded-lg transition-colors">
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button onClick={() => handleDelete(lecturer.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg transition-colors">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

@@ -5,6 +5,7 @@ export interface Student {
   last_name: string;
   email: string;
   rfid_tag: string; // The raw RFID card value
+  photo_url?: string;
   created_at?: string;
 }
 
@@ -60,3 +61,5 @@ export interface SupabaseConfig {
   url: string;
   key: string;
 }
+
+export type UserRole = 'admin' | 'student';
