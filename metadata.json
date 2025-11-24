@@ -1,0 +1,5 @@
+{
+  "name": "RFID Portal",
+  "description": "A React-based student attendance management system integrating with Supabase for data storage and authentication. Features real-time RFID logging simulation, student/lecturer management, and reporting.",
+  "requestFramePermissions": []
+}
