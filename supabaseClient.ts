@@ -8,11 +8,23 @@ let supabaseInstance: SupabaseClient | null = null;
 const FALLBACK_URL = "https://ynemvstppbexmuhifddd.supabase.co";
 const FALLBACK_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InluZW12c3RwcGJleG11aGlmZGRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM4OTIyNDAsImV4cCI6MjA3OTQ2ODI0MH0.WvsSSJkXzwZnjVgvNwMCxh9fFxdzHWY4SVddrdfACmI";
 
-// Get config from Vite env or Fallback
+// Get config from Vite env or Fallback safely
 const getEnvConfig = (): SupabaseConfig => {
-  // Use optional chaining to prevent crash if import.meta.env is undefined
-  const url = (import.meta as any).env?.VITE_SUPABASE_URL || FALLBACK_URL;
-  const key = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || FALLBACK_KEY;
+  let url = FALLBACK_URL;
+  let key = FALLBACK_KEY;
+
+  try {
+    // Check if import.meta exists and has env property to prevent crashes
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env) {
+      // @ts-ignore
+      url = import.meta.env.VITE_SUPABASE_URL || FALLBACK_URL;
+      // @ts-ignore
+      key = import.meta.env.VITE_SUPABASE_ANON_KEY || FALLBACK_KEY;
+    }
+  } catch (e) {
+    console.warn("Could not read environment variables, using fallbacks.", e);
+  }
   
   return { url, key };
 };

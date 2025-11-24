@@ -74,7 +74,14 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
   }
 
   if (!authenticated) return <Navigate to="/login" replace />;
-  if (userRole && !allowedRoles.includes(userRole)) return <Navigate to="/" replace />;
+  
+  // Prevent infinite redirect loops by redirecting to the correct home based on role
+  if (userRole && !allowedRoles.includes(userRole)) {
+    if (userRole === 'student') return <Navigate to="/student" replace />;
+    if (userRole === 'admin') return <Navigate to="/" replace />;
+    // Fallback
+    return <Navigate to="/login" replace />;
+  }
 
   return <AppLayout role={userRole!} />;
 };
