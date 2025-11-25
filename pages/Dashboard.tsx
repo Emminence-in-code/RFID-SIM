@@ -8,11 +8,11 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 export const Dashboard: React.FC = () => {
   const supabase = getSupabase();
   const role = localStorage.getItem('user_role');
-  const isAdmin = role === 'admin';
+  const isStaff = role === 'staff';
   const [loading, setLoading] = useState(true);
 
-  // Admin State
-  const [adminStats, setAdminStats] = useState({ students: 0, lecturers: 0, courses: 0, todayLogs: 0 });
+  // Staff State
+  const [staffStats, setStaffStats] = useState({ students: 0, lecturers: 0, courses: 0, todayLogs: 0 });
   const [chartData, setChartData] = useState<any[]>([]);
   
   // Student State
@@ -23,8 +23,8 @@ export const Dashboard: React.FC = () => {
     const fetchData = async () => {
       if (!supabase) return;
       
-      if (isAdmin) {
-        // --- ADMIN DASHBOARD DATA ---
+      if (isStaff) {
+        // --- STAFF DASHBOARD DATA ---
         const [
           { count: sCount }, 
           { count: lCount }, 
@@ -39,9 +39,9 @@ export const Dashboard: React.FC = () => {
         today.setHours(0,0,0,0);
         const { count: todayCount } = await supabase.from('attendance_logs').select('*', { count: 'exact', head: true }).gte('timestamp', today.toISOString());
 
-        setAdminStats({ students: sCount || 0, lecturers: lCount || 0, courses: cCount || 0, todayLogs: todayCount || 0 });
+        setStaffStats({ students: sCount || 0, lecturers: lCount || 0, courses: cCount || 0, todayLogs: todayCount || 0 });
         
-        // Mock Chart Data
+        // Mock Chart Data for visualization
         setChartData([
           { name: 'Mon', present: 40, late: 5 }, { name: 'Tue', present: 35, late: 8 },
           { name: 'Wed', present: 45, late: 2 }, { name: 'Thu', present: 30, late: 10 },
@@ -76,24 +76,24 @@ export const Dashboard: React.FC = () => {
     };
 
     fetchData();
-  }, [supabase, isAdmin]);
+  }, [supabase, isStaff]);
 
   if (loading) return <div className="text-slate-500">Loading dashboard...</div>;
 
-  // --- RENDER ADMIN ---
-  if (isAdmin) {
+  // --- RENDER STAFF ---
+  if (isStaff) {
     const cards = [
-      { label: 'Total Students', value: adminStats.students, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
-      { label: 'Lecturers', value: adminStats.lecturers, icon: UserCheck, color: 'text-purple-600', bg: 'bg-purple-50' },
-      { label: 'Active Courses', value: adminStats.courses, icon: BookOpen, color: 'text-primary-600', bg: 'bg-primary-50' },
-      { label: "Today's Scans", value: adminStats.todayLogs, icon: Clock, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+      { label: 'Total Students', value: staffStats.students, icon: Users, color: 'text-blue-600', bg: 'bg-blue-50' },
+      { label: 'Staff Members', value: staffStats.lecturers, icon: UserCheck, color: 'text-purple-600', bg: 'bg-purple-50' },
+      { label: 'Total Courses', value: staffStats.courses, icon: BookOpen, color: 'text-primary-600', bg: 'bg-primary-50' },
+      { label: "Today's Scans", value: staffStats.todayLogs, icon: Clock, color: 'text-emerald-600', bg: 'bg-emerald-50' },
     ];
 
     return (
       <div className="space-y-8">
         <div>
-           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Admin Overview</h1>
-           <p className="text-slate-500">System status and statistics.</p>
+           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Staff Overview</h1>
+           <p className="text-slate-500">System status and general statistics.</p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
            {cards.map((c, i) => (
@@ -109,7 +109,7 @@ export const Dashboard: React.FC = () => {
            ))}
         </div>
         <Card className="h-[400px] p-6">
-           <h3 className="text-lg font-bold mb-6">Attendance Trends</h3>
+           <h3 className="text-lg font-bold mb-6">Attendance Trends (Weekly)</h3>
            <ResponsiveContainer width="100%" height="100%">
              <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />

@@ -2,44 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Wifi, 
-  Clock, 
   ShieldCheck, 
   AlertTriangle,
-  Play,
-  Square,
-  Hash,
   Activity,
   User,
   List
 } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
-import { Course, Session, AttendanceLog, Student } from '../types';
+import { Session, AttendanceLog, Student } from '../types';
 
 // --- Constants ---
 const SESSION_DURATION_MS = 60 * 60 * 1000; // 1 Hour
 
 export const LiveConsole: React.FC = () => {
   const supabase = getSupabase();
-  const role = localStorage.getItem('user_role');
-  const isAdmin = role === 'admin';
-  
-  // --- State ---
-  const [courses, setCourses] = useState<Course[]>([]);
   const [activeSession, setActiveSession] = useState<Session | null>(null);
-  const [selectedCourseId, setSelectedCourseId] = useState<string>('');
   
   const [attendees, setAttendees] = useState<AttendanceLog[]>([]);
   const [currentScan, setCurrentScan] = useState<AttendanceLog | null>(null);
   const [duplicateScan, setDuplicateScan] = useState<Partial<Student> | null>(null);
-  
   const [timeLeft, setTimeLeft] = useState(0);
 
   // --- Effects ---
   useEffect(() => {
     const fetchInit = async () => {
       if (!supabase) return;
-      const { data } = await supabase.from('courses').select('*, lecturer:lecturers(*)');
-      if (data) setCourses(data as any);
       
       const { data: session } = await supabase
         .from('sessions')
@@ -55,6 +42,25 @@ export const LiveConsole: React.FC = () => {
       }
     };
     fetchInit();
+
+    // Listen for new sessions starting
+    const sessionChannel = supabase?.channel('session-monitor')
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'sessions' }, (payload) => {
+            if (payload.new.is_active) {
+                // Refresh full session data
+                fetchInit(); 
+            }
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'sessions' }, (payload) => {
+            if (!payload.new.is_active && activeSession?.id === payload.new.id) {
+                setActiveSession(null);
+            }
+        })
+        .subscribe();
+
+    return () => {
+        supabase?.removeChannel(sessionChannel);
+    }
   }, [supabase]);
 
   useEffect(() => {
@@ -100,30 +106,8 @@ export const LiveConsole: React.FC = () => {
     if(data) setAttendees(data as any);
   };
 
-  const startSession = async () => {
-    if (!supabase || !selectedCourseId || !isAdmin) return;
-    await supabase.from('sessions').update({ is_active: false }).eq('is_active', true);
-    const { data } = await supabase.from('sessions').insert({
-        course_id: selectedCourseId,
-        lecturer_id: courses.find(c => c.id === selectedCourseId)?.lecturer_id,
-        start_time: new Date().toISOString(),
-        is_active: true
-      }).select('*, course:courses(*, lecturer:lecturers(*))').single();
-    if (data) {
-      setActiveSession(data as any);
-      setAttendees([]);
-    }
-  };
-
-  const stopSession = async () => {
-    if (!supabase || !activeSession || !isAdmin) return;
-    await supabase.from('sessions').update({ is_active: false, end_time: new Date().toISOString() }).eq('id', activeSession.id);
-    setActiveSession(null);
-  };
-
   const handleNewScan = (log: AttendanceLog) => {
     setCurrentScan(log);
-    // Add to list after delay
     setTimeout(() => {
       setAttendees(prev => [log, ...prev.filter(p => p.id !== log.id)]);
       setCurrentScan(null);
@@ -144,32 +128,11 @@ export const LiveConsole: React.FC = () => {
         <div className="z-10 text-center max-w-md w-full p-10 bg-slate-950 border border-slate-800 rounded-2xl shadow-xl">
           <Activity className="w-16 h-16 text-slate-700 mx-auto mb-6" />
           <h2 className="text-2xl font-bold text-white mb-2">System Standby</h2>
-          <p className="text-slate-400 mb-8">{isAdmin ? 'Select a protocol to initialize session.' : 'Waiting for instructor to begin session.'}</p>
-          
-          {isAdmin ? (
-            <div className="space-y-4">
-              <select 
-                className="w-full bg-slate-900 border border-slate-700 text-white p-3 rounded-lg focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                value={selectedCourseId}
-                onChange={(e) => setSelectedCourseId(e.target.value)}
-              >
-                <option value="">Select Course...</option>
-                {courses.map(c => <option key={c.id} value={c.id}>{c.code} - {c.name}</option>)}
-              </select>
-              <button 
-                onClick={startSession}
-                disabled={!selectedCourseId}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Play className="w-4 h-4 fill-current" /> INITIALIZE
-              </button>
-            </div>
-          ) : (
-            <div className="flex items-center justify-center gap-2 text-slate-500 bg-slate-900 p-2 rounded">
+          <p className="text-slate-400 mb-8">Waiting for hardware terminal to initialize session.</p>
+          <div className="flex items-center justify-center gap-2 text-slate-500 bg-slate-900 p-2 rounded border border-slate-800">
               <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse"></div>
-              LISTENING FOR SIGNAL
+              LISTENING FOR HARDWARE SIGNAL
             </div>
-          )}
         </div>
       </div>
     );
@@ -196,11 +159,6 @@ export const LiveConsole: React.FC = () => {
             <div className="text-[10px] text-slate-500 uppercase tracking-widest">Elapsed</div>
             <div className="text-xl font-bold text-white font-variant-numeric">{formatTime(SESSION_DURATION_MS - timeLeft)}</div>
           </div>
-          {isAdmin && (
-            <button onClick={stopSession} className="bg-red-500/10 hover:bg-red-500/20 text-red-500 px-4 py-2 rounded border border-red-500/30 transition-colors flex items-center gap-2">
-              <Square className="w-3 h-3 fill-current" /> STOP
-            </button>
-          )}
         </div>
       </div>
 
@@ -221,7 +179,7 @@ export const LiveConsole: React.FC = () => {
             </div>
             <div className="bg-slate-900 p-4 flex items-center justify-between">
               <span className="text-slate-500 uppercase text-xs">Status</span>
-              <span className="text-emerald-500 font-bold flex items-center gap-2"><Wifi className="w-4 h-4" /> OK</span>
+              <span className="text-emerald-500 font-bold flex items-center gap-2"><Wifi className="w-4 h-4" /> ONLINE</span>
             </div>
           </div>
 

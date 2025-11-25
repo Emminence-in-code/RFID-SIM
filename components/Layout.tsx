@@ -8,7 +8,8 @@ import {
   LogOut,
   Radio,
   UserCircle,
-  Shield
+  Briefcase,
+  PieChart
 } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { UserRole } from '../types';
@@ -65,13 +66,14 @@ export const Layout: React.FC<LayoutProps> = ({ children, role }) => {
     navigate('/login');
   };
 
-  const adminNav = [
+  const staffNav = [
     { label: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { label: 'Live Console', path: '/live', icon: Radio },
+    { label: 'Live Monitor', path: '/live', icon: Radio },
+    { label: 'Reports', path: '/reports', icon: PieChart },
     { label: 'Students', path: '/students', icon: Users },
-    { label: 'Lecturers', path: '/lecturers', icon: GraduationCap },
+    { label: 'Staff Directory', path: '/lecturers', icon: GraduationCap },
     { label: 'Courses', path: '/courses', icon: BookOpen },
-    { label: 'Admin Profile', path: '/profile', icon: Shield },
+    { label: 'My Profile', path: '/profile', icon: Briefcase },
   ];
 
   const studentNav = [
@@ -82,7 +84,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, role }) => {
     { label: 'My Profile', path: '/student/profile', icon: UserCircle },
   ];
 
-  const navItems = role === 'admin' ? adminNav : studentNav;
+  const navItems = role === 'staff' ? staffNav : studentNav;
 
   return (
     <div className="flex h-screen bg-slate-100 overflow-hidden w-full font-sans">

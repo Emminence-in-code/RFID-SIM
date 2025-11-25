@@ -1,18 +1,20 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail, AlertCircle, ArrowRight, Radio, User, CreditCard } from 'lucide-react';
+import { Lock, Mail, AlertCircle, ArrowRight, Radio, User, CreditCard, Briefcase, Building } from 'lucide-react';
 import { Button, Input } from '../components/ui';
 import { getSupabase } from '../supabaseClient';
 
 export const AuthPage: React.FC = () => {
-  const [role, setRole] = useState<'student' | 'admin'>('student');
+  const [role, setRole] = useState<'student' | 'staff'>('student');
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   
   // Form States
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [matricNo, setMatricNo] = useState('');
+  const [staffId, setStaffId] = useState('');
   const [fullName, setFullName] = useState('');
+  const [department, setDepartment] = useState('');
   
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,12 +34,54 @@ export const AuthPage: React.FC = () => {
     }
 
     try {
-      if (role === 'admin') {
-        // --- ADMIN LOGIN (Email Only) ---
-        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-        if (authError) throw authError;
-        localStorage.setItem('user_role', 'admin');
-        navigate('/');
+      if (role === 'staff') {
+        if (authMode === 'signup') {
+            // --- STAFF SIGNUP ---
+            // Validate Staff ID Format: SMAF/0000
+            const staffIdRegex = /^SMAF\/\d{4}$/;
+            if (!staffIdRegex.test(staffId)) {
+                throw new Error("Invalid Staff ID format. Must be SMAF/####");
+            }
+
+            const { data: authData, error: authError } = await supabase.auth.signUp({ 
+                email, 
+                password,
+                options: { data: { full_name: fullName, role: 'staff' } }
+            });
+            if (authError) throw authError;
+
+            if (authData.user) {
+                const splitName = fullName.split(' ');
+                const { error: dbError } = await supabase.from('lecturers').insert({
+                    email: email,
+                    staff_id: staffId,
+                    first_name: splitName[0],
+                    last_name: splitName.slice(1).join(' ') || '',
+                    department: department
+                });
+                if (dbError) {
+                    console.error(dbError);
+                    throw new Error("Failed to create staff profile. Staff ID might be taken.");
+                }
+            }
+            alert("Staff account created! Please sign in.");
+            setAuthMode('login');
+
+        } else {
+            // --- STAFF LOGIN ---
+            const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+            if (authError) throw authError;
+            
+            // Verify they are actually staff in our DB
+            const { data: staff } = await supabase.from('lecturers').select('id').eq('email', email).single();
+            if (!staff) {
+               await supabase.auth.signOut();
+               throw new Error("No staff record found for this user.");
+            }
+
+            localStorage.setItem('user_role', 'staff');
+            navigate('/');
+        }
       } else {
         // --- STUDENT LOGIC ---
         if (authMode === 'signup') {
@@ -45,32 +89,33 @@ export const AuthPage: React.FC = () => {
           const { data: authData, error: authError } = await supabase.auth.signUp({ 
             email, 
             password,
-            options: { data: { full_name: fullName } }
+            options: { data: { full_name: fullName, role: 'student' } }
           });
           if (authError) throw authError;
 
-          // 2. Create Student Record
+          // 2. Create Student Record with AUTO-ASSIGNED RFID
           if (authData.user) {
             const splitName = fullName.split(' ');
+            // Generate pseudo-random unique RFID for simulation
+            const autoRfid = Math.random().toString(36).substring(2, 10).toUpperCase();
+
             const { error: dbError } = await supabase.from('students').insert({
               email: email,
               student_id: matricNo,
               first_name: splitName[0],
               last_name: splitName.slice(1).join(' ') || '',
-              rfid_tag: '', // Empty initially
+              rfid_tag: autoRfid, 
             });
             if (dbError) {
-              // Rollback auth if db fails (simplified)
               console.error(dbError);
               throw new Error("Failed to create student profile. Matric number might be taken.");
             }
           }
-          alert("Account created! Please sign in.");
+          alert("Student account created! RFID Tag assigned automatically.");
           setAuthMode('login');
 
         } else {
           // --- STUDENT LOGIN (Matric No + Pass) ---
-          // 1. Lookup Email from Matric No
           const { data: student, error: lookupError } = await supabase
             .from('students')
             .select('email')
@@ -79,7 +124,6 @@ export const AuthPage: React.FC = () => {
 
           if (lookupError || !student) throw new Error("Matric number not found.");
 
-          // 2. Sign in with resolved email
           const { error: signInError } = await supabase.auth.signInWithPassword({
             email: student.email,
             password
@@ -136,19 +180,19 @@ export const AuthPage: React.FC = () => {
               Student Portal
             </button>
             <button 
-              onClick={() => { setRole('admin'); setAuthMode('login'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'admin' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              onClick={() => { setRole('staff'); setAuthMode('login'); setError(null); }}
+              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'staff' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
             >
-              Admin Access
+              Staff Portal
             </button>
           </div>
 
           <div className="mb-8">
             <h1 className="text-3xl font-black text-slate-900 mb-2">
-              {role === 'student' ? (authMode === 'login' ? 'Student Login' : 'Student Registration') : 'Administrator Login'}
+              {role === 'student' ? (authMode === 'login' ? 'Student Login' : 'Student Registration') : (authMode === 'login' ? 'Staff Login' : 'New Staff Registration')}
             </h1>
             <p className="text-slate-500">
-              {role === 'student' ? 'Access your attendance history and profile.' : 'Manage courses, students, and devices.'}
+              {role === 'student' ? 'Access your attendance history.' : 'Manage courses and view reports.'}
             </p>
           </div>
 
@@ -160,9 +204,36 @@ export const AuthPage: React.FC = () => {
           )}
 
           <form onSubmit={handleAuth} className="space-y-4">
-            {role === 'admin' ? (
-              // ADMIN FORM
+            {role === 'staff' ? (
+              // STAFF FORM
               <>
+                {authMode === 'signup' && (
+                    <>
+                        <Input
+                            label="Full Name"
+                            icon={<User className="w-4 h-4" />}
+                            value={fullName}
+                            onChange={(e) => setFullName(e.target.value)}
+                            required
+                        />
+                         <Input
+                            label="Department"
+                            icon={<Building className="w-4 h-4" />}
+                            value={department}
+                            onChange={(e) => setDepartment(e.target.value)}
+                            placeholder="e.g. Electrical Engineering"
+                            required
+                        />
+                         <Input
+                            label="Staff ID (SMAF/####)"
+                            icon={<Briefcase className="w-4 h-4" />}
+                            value={staffId}
+                            onChange={(e) => setStaffId(e.target.value.toUpperCase())}
+                            placeholder="SMAF/0001"
+                            required
+                        />
+                    </>
+                )}
                 <Input
                   label="Email Address"
                   type="email"
@@ -231,19 +302,17 @@ export const AuthPage: React.FC = () => {
             </div>
           </form>
 
-          {role === 'student' && (
-            <div className="mt-6 text-center text-sm">
-              <span className="text-slate-500">
-                {authMode === 'login' ? "Don't have an account?" : "Already registered?"}
-              </span>
-              <button
-                onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-                className="ml-2 font-bold text-primary-600 hover:text-primary-800"
-              >
-                {authMode === 'login' ? "Sign up now" : "Log in"}
-              </button>
-            </div>
-          )}
+          <div className="mt-6 text-center text-sm">
+            <span className="text-slate-500">
+            {authMode === 'login' ? "Don't have an account?" : "Already registered?"}
+            </span>
+            <button
+            onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+            className="ml-2 font-bold text-primary-600 hover:text-primary-800"
+            >
+            {authMode === 'login' ? "Register Now" : "Log in"}
+            </button>
+        </div>
         </div>
       </div>
     </div>

@@ -11,6 +11,7 @@ export interface Student {
 
 export interface Lecturer {
   id: string;
+  staff_id: string; // New: SMAF/0000
   first_name: string;
   last_name: string;
   email: string;
@@ -22,7 +23,7 @@ export interface Course {
   id: string;
   code: string;
   name: string;
-  lecturer_id: string;
+  lecturer_id: string | null;
   lecturer?: Lecturer; // Joined data
   description?: string;
   created_at?: string;
@@ -54,6 +55,7 @@ export interface Enrollment {
   id: string;
   student_id: string;
   course_id: string;
+  course?: Course;
 }
 
 // Supabase Config Types
@@ -62,4 +64,4 @@ export interface SupabaseConfig {
   key: string;
 }
 
-export type UserRole = 'admin' | 'student';
+export type UserRole = 'staff' | 'student';

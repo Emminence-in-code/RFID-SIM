@@ -9,7 +9,8 @@ import { CoursesPage } from "./pages/Courses";
 import { LiveConsole } from "./pages/LiveConsole";
 import { HardwareSimulator } from "./pages/HardwareSimulator";
 import { StudentProfile } from "./pages/StudentProfile";
-import { AdminProfile } from "./pages/AdminProfile";
+import { StaffProfile } from "./pages/StaffProfile";
+import { ReportsPage } from "./pages/Reports";
 import { getSupabase, hasSupabaseConfig, initSupabase } from "./supabaseClient";
 import { Loader2 } from "lucide-react";
 import { UserRole } from "./types";
@@ -44,19 +45,16 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
         
         if (session) {
           setAuthenticated(true);
-          // Determine Role. 
-          // Strategy: Check if email exists in 'students' table. If yes, Student. Else, Admin.
-          // In a real app, use claims or a profiles table.
+          // Strategy: Check if email exists in 'students' table. If yes, Student. Else, Staff.
           const { data: student } = await supabase
             .from('students')
             .select('id')
             .eq('email', session.user.email)
             .single();
 
-          const role = student ? 'student' : 'admin';
+          const role = student ? 'student' : 'staff';
           setUserRole(role);
           
-          // Store role in local storage for synchronous access in other components if needed
           localStorage.setItem('user_role', role);
         }
       }
@@ -75,11 +73,9 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
 
   if (!authenticated) return <Navigate to="/login" replace />;
   
-  // Prevent infinite redirect loops by redirecting to the correct home based on role
   if (userRole && !allowedRoles.includes(userRole)) {
     if (userRole === 'student') return <Navigate to="/student" replace />;
-    if (userRole === 'admin') return <Navigate to="/" replace />;
-    // Fallback
+    if (userRole === 'staff') return <Navigate to="/" replace />;
     return <Navigate to="/login" replace />;
   }
 
@@ -95,14 +91,15 @@ const App: React.FC = () => {
         {/* Standalone Hardware Route (No Layout) */}
         <Route path="/hardware" element={<HardwareSimulator />} />
 
-        {/* Admin Routes */}
-        <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+        {/* Staff Routes */}
+        <Route element={<ProtectedRoute allowedRoles={['staff']} />}>
           <Route path="/" element={<Dashboard />} />
           <Route path="/live" element={<LiveConsole />} />
+          <Route path="/reports" element={<ReportsPage />} />
           <Route path="/students" element={<StudentsPage />} />
           <Route path="/lecturers" element={<LecturersPage />} />
           <Route path="/courses" element={<CoursesPage />} />
-          <Route path="/profile" element={<AdminProfile />} />
+          <Route path="/profile" element={<StaffProfile />} />
         </Route>
 
         {/* Student Routes */}

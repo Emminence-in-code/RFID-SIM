@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, CreditCard, Play, Square, Settings, RefreshCw, Power } from 'lucide-react';
+import { Radio, CreditCard, Play, Square, Settings, Grid, Delete } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { Course, Lecturer, Student } from '../types';
 
@@ -8,15 +8,16 @@ export const HardwareSimulator: React.FC = () => {
   
   // Data State
   const [courses, setCourses] = useState<Course[]>([]);
-  const [lecturers, setLecturers] = useState<Lecturer[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   
   // Device State
-  const [selectedLecturer, setSelectedLecturer] = useState('');
-  const [selectedCourse, setSelectedCourse] = useState('');
-  const [deviceState, setDeviceState] = useState<'booting' | 'standby' | 'active' | 'error'>('booting');
+  const [inputBuffer, setInputBuffer] = useState('');
+  const [deviceState, setDeviceState] = useState<'booting' | 'idle' | 'enter_id' | 'select_course' | 'active' | 'error'>('booting');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [oledLines, setOledLines] = useState<string[]>(['> SYSTEM BOOT', '> CHECKING NET...']);
+  const [currentStaff, setCurrentStaff] = useState<Lecturer | null>(null);
+  const [availableCourses, setAvailableCourses] = useState<Course[]>([]);
+  
+  const [oledLines, setOledLines] = useState<string[]>(['> SYSTEM BOOT...']);
   const [leds, setLeds] = useState({ pwr: true, net: false, read: false });
 
   // Init
@@ -25,25 +26,23 @@ export const HardwareSimulator: React.FC = () => {
       if (!supabase) return;
       setTimeout(() => setLeds(prev => ({...prev, net: true})), 1000);
       
-      const [cRes, lRes, sRes, sessionRes] = await Promise.all([
+      const [cRes, sRes, sessionRes] = await Promise.all([
         supabase.from('courses').select('*'),
-        supabase.from('lecturers').select('*'),
         supabase.from('students').select('*'),
         supabase.from('sessions').select('*').eq('is_active', true).single()
       ]);
 
       if (cRes.data) setCourses(cRes.data as any);
-      if (lRes.data) setLecturers(lRes.data as any);
       if (sRes.data) setStudents(sRes.data as any);
 
       if (sessionRes.data) {
+        // Resume session
         setActiveSessionId(sessionRes.data.id);
-        setSelectedCourse(sessionRes.data.course_id);
         setDeviceState('active');
         setOledLines(['> SESSION ACTIVE', '> READY TO SCAN']);
       } else {
-        setDeviceState('standby');
-        setOledLines(['> SYSTEM READY', '> AWAITING CONFIG']);
+        setDeviceState('idle');
+        setOledLines(['> WELCOME', '> PRESS # TO START']);
       }
     };
     init();
@@ -56,16 +55,95 @@ export const HardwareSimulator: React.FC = () => {
     setTimeout(() => setLeds(prev => ({...prev, read: false})), 300);
   };
 
-  const startSession = async () => {
-    if (!supabase || !selectedCourse) return;
+  const handleKeypad = async (key: string) => {
+    if (deviceState === 'idle') {
+        if (key === '#') {
+            setDeviceState('enter_id');
+            setInputBuffer('');
+            updateScreen(['ENTER STAFF ID:', 'SMAF/____']);
+        }
+        return;
+    }
+
+    if (deviceState === 'enter_id') {
+        if (key === 'C') {
+            setInputBuffer(prev => prev.slice(0, -1));
+            updateScreen(['ENTER STAFF ID:', `SMAF/${inputBuffer.slice(0, -1)}`]);
+        } else if (key === '#') {
+            // Submit ID
+            if (inputBuffer.length !== 4) {
+                updateScreen(['INVALID ID LENGTH', 'TRY AGAIN']);
+                setTimeout(() => {
+                    setInputBuffer('');
+                    updateScreen(['ENTER STAFF ID:', 'SMAF/____']);
+                }, 1500);
+                return;
+            }
+            // Fetch Staff
+            updateScreen(['VERIFYING ID...']);
+            const fullId = `SMAF/${inputBuffer}`;
+            const { data: staff } = await supabase!.from('lecturers').select('*').eq('staff_id', fullId).single();
+            
+            if (staff) {
+                setCurrentStaff(staff);
+                // Fetch courses for this staff
+                const { data: myCourses } = await supabase!.from('courses').select('*').eq('lecturer_id', staff.id);
+                if (myCourses && myCourses.length > 0) {
+                    setAvailableCourses(myCourses as any);
+                    setDeviceState('select_course');
+                    updateScreen(['SELECT COURSE (1-9):', ...myCourses.slice(0, 3).map((c, i) => `${i+1}. ${c.code}`)]);
+                } else {
+                    updateScreen(['NO COURSES FOUND', 'FOR THIS ID']);
+                    setTimeout(() => {
+                        setDeviceState('idle');
+                        updateScreen(['> WELCOME', '> PRESS # TO START']);
+                    }, 2000);
+                }
+            } else {
+                updateScreen(['ID NOT FOUND']);
+                setTimeout(() => {
+                    setInputBuffer('');
+                    setDeviceState('idle');
+                    updateScreen(['> WELCOME', '> PRESS # TO START']);
+                }, 2000);
+            }
+        } else if (/^\d$/.test(key)) {
+             if (inputBuffer.length < 4) {
+                 const newVal = inputBuffer + key;
+                 setInputBuffer(newVal);
+                 updateScreen(['ENTER STAFF ID:', `SMAF/${newVal}`]);
+             }
+        }
+        return;
+    }
+
+    if (deviceState === 'select_course') {
+        const idx = parseInt(key) - 1;
+        if (idx >= 0 && idx < availableCourses.length) {
+            const selected = availableCourses[idx];
+            await startSession(selected.id);
+        }
+        return;
+    }
+
+    if (deviceState === 'active') {
+        if (key === '*') {
+            // End session
+            await stopSession();
+        }
+    }
+  };
+
+  const startSession = async (courseId: string) => {
+    if (!supabase || !currentStaff) return;
     updateScreen(['> INITIALIZING...', '> CONTACTING DB']);
     
     // Stop previous
     await supabase.from('sessions').update({ is_active: false }).eq('is_active', true);
     
     const { data } = await supabase.from('sessions').insert({
-        course_id: selectedCourse,
-        lecturer_id: selectedLecturer || courses.find(c => c.id === selectedCourse)?.lecturer_id,
+        course_id: courseId,
+        lecturer_id: currentStaff.id,
         start_time: new Date().toISOString(),
         is_active: true
     }).select().single();
@@ -73,7 +151,7 @@ export const HardwareSimulator: React.FC = () => {
     if (data) {
         setActiveSessionId(data.id);
         setDeviceState('active');
-        updateScreen(['> SESSION STARTED', '> READY TO SCAN']);
+        updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
     }
   };
 
@@ -82,8 +160,8 @@ export const HardwareSimulator: React.FC = () => {
     updateScreen(['> TERMINATING...']);
     await supabase.from('sessions').update({ is_active: false, end_time: new Date().toISOString() }).eq('id', activeSessionId);
     setActiveSessionId(null);
-    setDeviceState('standby');
-    updateScreen(['> SESSION ENDED', '> STANDBY MODE']);
+    setDeviceState('idle');
+    updateScreen(['> SESSION ENDED', '> PRESS # TO START']);
   };
 
   const scanTag = async (student: Student) => {
@@ -98,7 +176,6 @@ export const HardwareSimulator: React.FC = () => {
     const { error } = await supabase.from('attendance_logs').insert({
         session_id: activeSessionId,
         student_id: student.id,
-        course_id: selectedCourse,
         status: 'present'
     });
 
@@ -108,132 +185,102 @@ export const HardwareSimulator: React.FC = () => {
         } else {
              updateScreen(['> SYS ERROR', `> ${error.code}`]);
         }
-        setDeviceState('error');
+        // Recover
         setTimeout(() => {
-          setDeviceState('active');
-          updateScreen(['> READY TO SCAN']);
-        }, 2000);
+          updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+        }, 1500);
     } else {
         updateScreen(['> ACCESS GRANTED', `> ${student.first_name}`]);
         setTimeout(() => {
-          updateScreen(['> READY TO SCAN']);
-        }, 2000);
+          updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+        }, 1500);
     }
   };
 
   return (
     <div className="min-h-screen bg-neutral-900 flex items-center justify-center font-sans p-8">
-      <div className="flex gap-12 w-full max-w-6xl items-start">
+      <div className="flex gap-12 w-full max-w-6xl items-start justify-center">
         
         {/* PHYSICAL DEVICE */}
-        <div className="flex-1">
-            <div className="relative aspect-[4/5] max-w-[500px] mx-auto bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-8">
-                {/* Screw holes */}
-                <div className="absolute top-6 left-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
-                <div className="absolute top-6 right-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
-                <div className="absolute bottom-6 left-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
-                <div className="absolute bottom-6 right-6 w-3 h-3 bg-neutral-900 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.8)] opacity-50"></div>
-
+        <div className="flex-1 max-w-[400px]">
+            <div className="relative bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-6">
+                
                 {/* Header */}
-                <div className="flex justify-between items-center px-4">
-                    <div className="flex gap-2">
-                         <div className="text-[10px] font-bold text-neutral-500">PWR</div>
+                <div className="flex justify-between items-center px-2">
+                    <div className="flex gap-2 items-center">
                          <div className={`w-2 h-2 rounded-full ${leds.pwr ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-neutral-900'}`}></div>
+                         <div className="text-[10px] font-bold text-neutral-500">PWR</div>
                     </div>
-                    <div className="font-mono font-bold text-neutral-600 tracking-widest text-xs">RFID-TERMINAL V2</div>
-                    <div className="flex gap-2">
+                    <div className="font-mono font-bold text-neutral-600 tracking-widest text-xs">RFID-TERMINAL</div>
+                    <div className="flex gap-2 items-center">
                          <div className="text-[10px] font-bold text-neutral-500">NET</div>
                          <div className={`w-2 h-2 rounded-full ${leds.net ? 'bg-blue-500 shadow-[0_0_8px_#3b82f6]' : 'bg-neutral-900'}`}></div>
                     </div>
                 </div>
 
-                {/* Screen */}
-                <div className="bg-black rounded-lg border-8 border-neutral-700 h-48 relative overflow-hidden p-4 shadow-[inset_0_0_20px_black]">
-                    <div className="font-mono text-green-500 text-lg leading-relaxed relative z-10">
+                {/* Smaller OLED Screen */}
+                <div className="bg-black rounded border-4 border-neutral-700 h-24 relative overflow-hidden p-3 shadow-[inset_0_0_20px_black]">
+                    <div className="font-mono text-green-500 text-sm leading-snug relative z-10">
                         {oledLines.map((l,i) => <div key={i}>{l}</div>)}
                     </div>
-                    {/* Scanlines */}
-                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[size:100%_4px] opacity-30 pointer-events-none"></div>
+                    <div className="absolute inset-0 bg-[linear-gradient(transparent_50%,rgba(0,0,0,0.5)_50%)] bg-[size:100%_2px] opacity-30 pointer-events-none"></div>
                 </div>
 
                 {/* Sensor Area */}
-                <div className="flex-1 bg-neutral-700 rounded-2xl border-2 border-neutral-600 shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center relative group">
-                    <Radio className={`w-24 h-24 text-neutral-500 transition-colors ${leds.read ? 'text-blue-400' : ''}`} />
-                    <div className="absolute bottom-4 text-xs font-bold text-neutral-500 tracking-widest">NFC TARGET AREA</div>
-                    {deviceState === 'active' && <div className="absolute inset-0 border-4 border-blue-500/20 rounded-2xl animate-pulse"></div>}
+                <div className="bg-neutral-700 h-32 rounded-xl border-2 border-neutral-600 shadow-[inset_0_0_30px_rgba(0,0,0,0.5)] flex items-center justify-center relative group">
+                    <Radio className={`w-16 h-16 text-neutral-500 transition-colors ${leds.read ? 'text-blue-400' : ''}`} />
+                    <div className="absolute bottom-2 text-[10px] font-bold text-neutral-500 tracking-widest">TAP CARD HERE</div>
+                    {deviceState === 'active' && <div className="absolute inset-0 border-4 border-blue-500/20 rounded-xl animate-pulse"></div>}
                 </div>
 
-                {/* Status Bar */}
-                <div className="h-2 bg-neutral-900 rounded-full overflow-hidden">
-                    <div className={`h-full transition-all duration-300 ${deviceState === 'active' ? 'bg-blue-500 w-full' : deviceState === 'error' ? 'bg-red-500 w-full' : 'bg-neutral-600 w-1/3'}`}></div>
+                {/* Numpad */}
+                <div className="grid grid-cols-3 gap-3 px-4">
+                    {[1,2,3,4,5,6,7,8,9].map(n => (
+                        <button key={n} onClick={() => handleKeypad(n.toString())} className="h-10 bg-neutral-700 rounded shadow-[0_4px_0_#404040] active:shadow-none active:translate-y-[4px] text-white font-mono font-bold hover:bg-neutral-600 transition-colors">
+                            {n}
+                        </button>
+                    ))}
+                    <button onClick={() => handleKeypad('C')} className="h-10 bg-red-900/50 rounded shadow-[0_4px_0_#450a0a] active:shadow-none active:translate-y-[4px] text-red-200 font-bold hover:bg-red-900/70 text-xs">CLR</button>
+                    <button onClick={() => handleKeypad('0')} className="h-10 bg-neutral-700 rounded shadow-[0_4px_0_#404040] active:shadow-none active:translate-y-[4px] text-white font-mono font-bold hover:bg-neutral-600">0</button>
+                    <button onClick={() => handleKeypad(deviceState === 'active' ? '*' : '#')} className="h-10 bg-green-900/50 rounded shadow-[0_4px_0_#052e16] active:shadow-none active:translate-y-[4px] text-green-200 font-bold hover:bg-green-900/70 text-xs">
+                        {deviceState === 'active' ? 'END' : 'ENT'}
+                    </button>
                 </div>
             </div>
         </div>
 
-        {/* CONFIG PANEL */}
-        <div className="w-80 bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
-            <h2 className="font-bold text-lg mb-6 flex items-center gap-2">
-                <Settings className="w-5 h-5 text-neutral-400" /> Control Panel
+        {/* TEST PANEL */}
+        <div className="w-72 bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
+            <h2 className="font-bold text-sm mb-4 flex items-center gap-2 text-neutral-400">
+                <Settings className="w-4 h-4" /> Simulation Controls
             </h2>
 
-            <div className="space-y-6">
-                <div>
-                    <label className="text-xs font-bold text-neutral-500 uppercase">Configuration</label>
-                    <div className="mt-2 space-y-3">
-                        <select 
-                            className="w-full bg-neutral-900 border border-neutral-700 rounded p-2 text-sm"
-                            value={selectedLecturer}
-                            onChange={(e) => setSelectedLecturer(e.target.value)}
-                            disabled={deviceState === 'active'}
-                        >
-                            <option value="">Select Lecturer</option>
-                            {lecturers.map(l => <option key={l.id} value={l.id}>{l.first_name} {l.last_name}</option>)}
-                        </select>
-                        <select 
-                            className="w-full bg-neutral-900 border border-neutral-700 rounded p-2 text-sm"
-                            value={selectedCourse}
-                            onChange={(e) => setSelectedCourse(e.target.value)}
-                            disabled={deviceState === 'active'}
-                        >
-                            <option value="">Select Course</option>
-                            {courses.map(c => <option key={c.id} value={c.id}>{c.code}</option>)}
-                        </select>
-                    </div>
+            <div className="space-y-4">
+                <div className="bg-neutral-900 p-3 rounded text-xs text-neutral-400 border border-neutral-700">
+                    <p className="font-bold text-neutral-300 mb-1">Instructions:</p>
+                    <ol className="list-decimal pl-4 space-y-1">
+                        <li>Press <span className="text-green-400">ENT</span> to start.</li>
+                        <li>Enter Staff ID using Numpad (Try <span className="text-white font-mono">SMAF/0001</span>).</li>
+                        <li>Press <span className="text-green-400">ENT</span>.</li>
+                        <li>Select Course (1-9).</li>
+                        <li>Tap a test card below.</li>
+                    </ol>
                 </div>
 
-                <div>
-                    {deviceState !== 'active' ? (
-                        <button 
-                            onClick={startSession}
-                            disabled={!selectedCourse}
-                            className="w-full bg-green-700 hover:bg-green-600 py-3 rounded font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            <Play className="w-4 h-4 fill-current" /> BOOT SESSION
-                        </button>
-                    ) : (
-                        <button 
-                            onClick={stopSession}
-                            className="w-full bg-red-700 hover:bg-red-600 py-3 rounded font-bold text-sm flex items-center justify-center gap-2"
-                        >
-                            <Square className="w-4 h-4 fill-current" /> KILL SESSION
-                        </button>
-                    )}
-                </div>
-
-                <div className="border-t border-neutral-700 pt-6">
+                <div className="border-t border-neutral-700 pt-4">
                     <label className="text-xs font-bold text-neutral-500 uppercase mb-3 block">Test Cards (Click to Tap)</label>
-                    <div className="space-y-2">
+                    <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                         {students.map(s => (
                             <button 
                                 key={s.id}
                                 onClick={() => scanTag(s)}
                                 disabled={deviceState !== 'active'}
-                                className="w-full bg-neutral-700 hover:bg-neutral-600 p-3 rounded flex items-center gap-3 text-left disabled:opacity-50"
+                                className="w-full bg-neutral-700 hover:bg-neutral-600 p-2 rounded flex items-center gap-3 text-left disabled:opacity-50 transition-all active:scale-95"
                             >
                                 <CreditCard className="w-4 h-4 text-neutral-400" />
-                                <div>
-                                    <div className="text-xs font-bold">{s.first_name} {s.last_name}</div>
-                                    <div className="text-[10px] text-neutral-400 font-mono">{s.student_id}</div>
+                                <div className="min-w-0">
+                                    <div className="text-xs font-bold truncate">{s.first_name} {s.last_name}</div>
+                                    <div className="text-[10px] text-neutral-400 font-mono truncate">{s.rfid_tag}</div>
                                 </div>
                             </button>
                         ))}
