@@ -1,3 +1,4 @@
+
 export interface Student {
   id: string;
   student_id: string; // The visual ID (e.g., S12345)
@@ -16,6 +17,7 @@ export interface Lecturer {
   last_name: string;
   email: string;
   department: string;
+  photo_url?: string;
   created_at?: string;
 }
 
