@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Lock, Mail, AlertCircle, ArrowRight, Radio, User, CreditCard, Briefcase, Building } from 'lucide-react';
+import { Lock, Mail, AlertCircle, ArrowRight, Radio, User, CreditCard, Briefcase, Building, KeyRound, ArrowLeft } from 'lucide-react';
 import { Button, Input } from '../components/ui';
 import { getSupabase } from '../supabaseClient';
 
 export const AuthPage: React.FC = () => {
   const [role, setRole] = useState<'student' | 'staff'>('student');
-  const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
+  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'forgot_password'>('login');
   
   // Form States
   const [email, setEmail] = useState('');
@@ -34,6 +34,18 @@ export const AuthPage: React.FC = () => {
     }
 
     try {
+      // --- FORGOT PASSWORD FLOW ---
+      if (authMode === 'forgot_password') {
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: window.location.origin, // Users will be redirected back to the app logged in
+        });
+        if (error) throw error;
+        alert("Password reset instructions sent! Please check your email.");
+        setAuthMode('login');
+        setLoading(false);
+        return;
+      }
+
       if (role === 'staff') {
         if (authMode === 'signup') {
             // --- STAFF SIGNUP ---
@@ -61,10 +73,12 @@ export const AuthPage: React.FC = () => {
                 });
                 if (dbError) {
                     console.error(dbError);
+                    // Note: If DB insert fails, the Auth user still exists. 
+                    // In a prod app, you'd want a transaction or cleanup.
                     throw new Error("Failed to create staff profile. Staff ID might be taken.");
                 }
             }
-            alert("Staff account created! Please sign in.");
+            alert("Account created! Please check your email to confirm your account.");
             setAuthMode('login');
 
         } else {
@@ -111,7 +125,7 @@ export const AuthPage: React.FC = () => {
               throw new Error("Failed to create student profile. Matric number might be taken.");
             }
           }
-          alert("Student account created! RFID Tag assigned automatically.");
+          alert("Account created! Please check your email to confirm your account.");
           setAuthMode('login');
 
         } else {
@@ -139,6 +153,18 @@ export const AuthPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const getTitle = () => {
+    if (authMode === 'forgot_password') return 'Reset Password';
+    if (role === 'student') return authMode === 'login' ? 'Student Login' : 'Student Registration';
+    return authMode === 'login' ? 'Staff Login' : 'New Staff Registration';
+  };
+
+  const getDescription = () => {
+    if (authMode === 'forgot_password') return 'Enter your email to receive reset instructions.';
+    if (role === 'student') return 'Access your attendance history.';
+    return 'Manage courses and view reports.';
   };
 
   return (
@@ -171,29 +197,27 @@ export const AuthPage: React.FC = () => {
       {/* Right Panel - Form */}
       <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
         <div className="max-w-md w-full">
-          {/* Role Switcher */}
-          <div className="flex p-1 bg-slate-200 rounded-xl mb-8">
-            <button 
-              onClick={() => { setRole('student'); setAuthMode('login'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'student' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              Student Portal
-            </button>
-            <button 
-              onClick={() => { setRole('staff'); setAuthMode('login'); setError(null); }}
-              className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'staff' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-            >
-              Staff Portal
-            </button>
-          </div>
+          {/* Role Switcher - Hide during Forgot Password */}
+          {authMode !== 'forgot_password' && (
+            <div className="flex p-1 bg-slate-200 rounded-xl mb-8">
+                <button 
+                onClick={() => { setRole('student'); setAuthMode('login'); setError(null); }}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'student' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                Student Portal
+                </button>
+                <button 
+                onClick={() => { setRole('staff'); setAuthMode('login'); setError(null); }}
+                className={`flex-1 py-2 text-sm font-bold rounded-lg transition-all ${role === 'staff' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                Staff Portal
+                </button>
+            </div>
+          )}
 
           <div className="mb-8">
-            <h1 className="text-3xl font-black text-slate-900 mb-2">
-              {role === 'student' ? (authMode === 'login' ? 'Student Login' : 'Student Registration') : (authMode === 'login' ? 'Staff Login' : 'New Staff Registration')}
-            </h1>
-            <p className="text-slate-500">
-              {role === 'student' ? 'Access your attendance history.' : 'Manage courses and view reports.'}
-            </p>
+            <h1 className="text-3xl font-black text-slate-900 mb-2">{getTitle()}</h1>
+            <p className="text-slate-500">{getDescription()}</p>
           </div>
 
           {error && (
@@ -204,7 +228,33 @@ export const AuthPage: React.FC = () => {
           )}
 
           <form onSubmit={handleAuth} className="space-y-4">
-            {role === 'staff' ? (
+            
+            {/* FORGOT PASSWORD FORM */}
+            {authMode === 'forgot_password' ? (
+                <>
+                    <Input
+                        label="Email Address"
+                        type="email"
+                        icon={<Mail className="w-4 h-4" />}
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Enter your registered email"
+                        required
+                    />
+                     <div className="pt-4 space-y-3">
+                        <Button type="submit" className="w-full py-3" isLoading={loading}>
+                             Send Reset Link <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                        <button 
+                            type="button"
+                            onClick={() => setAuthMode('login')}
+                            className="w-full py-3 text-sm font-bold text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors"
+                        >
+                            <ArrowLeft className="w-4 h-4 mr-2" /> Back to Login
+                        </button>
+                     </div>
+                </>
+            ) : role === 'staff' ? (
               // STAFF FORM
               <>
                 {authMode === 'signup' && (
@@ -242,14 +292,27 @@ export const AuthPage: React.FC = () => {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                 />
-                <Input
-                  label="Password"
-                  type="password"
-                  icon={<Lock className="w-4 h-4" />}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <div className="space-y-1">
+                    <Input
+                    label="Password"
+                    type="password"
+                    icon={<Lock className="w-4 h-4" />}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    />
+                    {authMode === 'login' && (
+                        <div className="flex justify-end">
+                            <button 
+                                type="button"
+                                onClick={() => setAuthMode('forgot_password')}
+                                className="text-xs font-semibold text-primary-600 hover:text-primary-800"
+                            >
+                                Forgot Password?
+                            </button>
+                        </div>
+                    )}
+                </div>
               </>
             ) : (
               // STUDENT FORM
@@ -284,35 +347,53 @@ export const AuthPage: React.FC = () => {
                   required
                 />
                 
-                <Input
-                  label="Password"
-                  type="password"
-                  icon={<Lock className="w-4 h-4" />}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <div className="space-y-1">
+                    <Input
+                        label="Password"
+                        type="password"
+                        icon={<Lock className="w-4 h-4" />}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                    />
+                    {authMode === 'login' && (
+                        <div className="flex justify-end">
+                            <button 
+                                type="button"
+                                onClick={() => setAuthMode('forgot_password')}
+                                className="text-xs font-semibold text-primary-600 hover:text-primary-800"
+                            >
+                                Forgot Password?
+                            </button>
+                        </div>
+                    )}
+                </div>
               </>
             )}
             
-            <div className="pt-4">
-              <Button type="submit" className="w-full py-3" isLoading={loading}>
-                {authMode === 'login' ? 'Sign In' : 'Create Account'} <ArrowRight className="w-4 h-4 ml-2" />
-              </Button>
-            </div>
+            {/* Submit Button (Hidden in Forgot Password mode as it has its own) */}
+            {authMode !== 'forgot_password' && (
+                <div className="pt-4">
+                <Button type="submit" className="w-full py-3" isLoading={loading}>
+                    {authMode === 'login' ? 'Sign In' : 'Create Account'} <ArrowRight className="w-4 h-4 ml-2" />
+                </Button>
+                </div>
+            )}
           </form>
 
-          <div className="mt-6 text-center text-sm">
-            <span className="text-slate-500">
-            {authMode === 'login' ? "Don't have an account?" : "Already registered?"}
-            </span>
-            <button
-            onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-            className="ml-2 font-bold text-primary-600 hover:text-primary-800"
-            >
-            {authMode === 'login' ? "Register Now" : "Log in"}
-            </button>
-        </div>
+          {authMode !== 'forgot_password' && (
+            <div className="mt-6 text-center text-sm">
+                <span className="text-slate-500">
+                {authMode === 'login' ? "Don't have an account?" : "Already registered?"}
+                </span>
+                <button
+                onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
+                className="ml-2 font-bold text-primary-600 hover:text-primary-800"
+                >
+                {authMode === 'login' ? "Register Now" : "Log in"}
+                </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

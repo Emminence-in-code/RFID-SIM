@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, CreditCard, Play, Square, Settings, Grid, Delete, WifiOff } from 'lucide-react';
+import { Radio, CreditCard, Play, Square, Settings, Grid, Delete, WifiOff, Cpu, Barcode } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { Course, Lecturer, Student } from '../types';
 
@@ -8,7 +8,8 @@ export const HardwareSimulator: React.FC = () => {
   
   // Data State
   const [courses, setCourses] = useState<Course[]>([]);
-  const [students, setStudents] = useState<Student[]>([]);
+  const [allStudents, setAllStudents] = useState<Student[]>([]);
+  const [enrolledStudents, setEnrolledStudents] = useState<Student[]>([]); // Filtered list
   
   // Device State
   const [inputBuffer, setInputBuffer] = useState('');
@@ -17,6 +18,7 @@ export const HardwareSimulator: React.FC = () => {
   const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Lecturer | null>(null);
   const [availableCourses, setAvailableCourses] = useState<Course[]>([]);
+  const [isScanningLock, setIsScanningLock] = useState(false);
   
   const [oledLines, setOledLines] = useState<string[]>(['> SYSTEM BOOT...']);
   const [leds, setLeds] = useState({ pwr: true, net: false, read: false });
@@ -43,14 +45,18 @@ export const HardwareSimulator: React.FC = () => {
         if (sRes.error) throw sRes.error;
 
         if (cRes.data) setCourses(cRes.data as any);
-        if (sRes.data) setStudents(sRes.data as any);
+        if (sRes.data) setAllStudents(sRes.data as any);
 
         if (sessionRes.data) {
           // Resume session
-          setActiveSessionId(sessionRes.data.id);
-          setActiveCourseId(sessionRes.data.course_id);
+          const sess = sessionRes.data;
+          setActiveSessionId(sess.id);
+          setActiveCourseId(sess.course_id);
           setDeviceState('active');
           setOledLines(['> SESSION ACTIVE', '> READY TO SCAN']);
+          
+          // Fetch enrolled students for this course immediately
+          fetchEnrollments(sess.course_id, sRes.data as any);
         } else {
           setDeviceState('idle');
           setOledLines(['> WELCOME', '> PRESS # TO START']);
@@ -64,6 +70,23 @@ export const HardwareSimulator: React.FC = () => {
     };
     init();
   }, [supabase]);
+
+  const fetchEnrollments = async (courseId: string, studentsList: Student[]) => {
+      if (!supabase) return;
+      // Get student IDs enrolled in this course
+      const { data: enrollments } = await supabase
+        .from('enrollments')
+        .select('student_id')
+        .eq('course_id', courseId);
+      
+      if (enrollments) {
+          const enrolledIds = new Set(enrollments.map(e => e.student_id));
+          const filtered = studentsList.filter(s => enrolledIds.has(s.id));
+          setEnrolledStudents(filtered);
+      } else {
+          setEnrolledStudents([]);
+      }
+  };
 
   // Actions
   const updateScreen = (lines: string[]) => setOledLines(lines);
@@ -178,6 +201,9 @@ export const HardwareSimulator: React.FC = () => {
             setActiveCourseId(courseId);
             setDeviceState('active');
             updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
+            
+            // Filter students for this course
+            fetchEnrollments(courseId, allStudents);
         }
     } catch (e) {
         updateScreen(['> ERROR STARTING', '> RETRYING...']);
@@ -191,16 +217,19 @@ export const HardwareSimulator: React.FC = () => {
     await supabase.from('sessions').update({ is_active: false, end_time: new Date().toISOString() }).eq('id', activeSessionId);
     setActiveSessionId(null);
     setActiveCourseId(null);
+    setEnrolledStudents([]);
     setDeviceState('idle');
     updateScreen(['> SESSION ENDED', '> PRESS # TO START']);
   };
 
   const scanTag = async (student: Student) => {
+    if (isScanningLock) return; // Prevent double taps
     if (!supabase || deviceState !== 'active' || !activeSessionId || !activeCourseId) {
         if (!activeCourseId) updateScreen(['> ERROR: NO COURSE', '> RESTART SESSION']);
         return;
     }
     
+    setIsScanningLock(true);
     blinkRead();
     updateScreen(['> READING TAG...', `> ID: ${student.rfid_tag?.slice(0,6) || 'UNK'}`]);
     
@@ -208,6 +237,25 @@ export const HardwareSimulator: React.FC = () => {
     await new Promise(r => setTimeout(r, 600));
 
     try {
+        // STRICT DOUBLE ENTRY CHECK
+        // 1. Check DB for existing log in this session
+        const { data: existing } = await supabase
+            .from('attendance_logs')
+            .select('id')
+            .eq('session_id', activeSessionId)
+            .eq('student_id', student.id)
+            .single();
+
+        if (existing) {
+             updateScreen(['> ERROR: DUPLICATE', '> ALREADY LOGGED']);
+             setTimeout(() => {
+                updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+                setIsScanningLock(false);
+             }, 1500);
+             return;
+        }
+
+        // 2. Insert
         const { error } = await supabase.from('attendance_logs').insert({
             session_id: activeSessionId,
             student_id: student.id,
@@ -222,28 +270,29 @@ export const HardwareSimulator: React.FC = () => {
                 console.error(error);
                 updateScreen(['> SYS ERROR', `> ${error.code || 'UNKNOWN'}`]);
             }
-            // Recover
-            setTimeout(() => {
-            updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
-            }, 1500);
         } else {
             updateScreen(['> ACCESS GRANTED', `> ${student.first_name}`]);
-            setTimeout(() => {
-            updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
-            }, 1500);
         }
+        
+        // Reset screen after delay
+        setTimeout(() => {
+            updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+            setIsScanningLock(false);
+        }, 1500);
+
     } catch (e) {
         updateScreen(['> CONNECTION LOST']);
+        setIsScanningLock(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-neutral-900 flex items-center justify-center font-sans p-8">
-      <div className="flex flex-col md:flex-row gap-12 w-full max-w-6xl items-center md:items-start justify-center">
+      <div className="flex flex-col md:flex-row gap-12 w-full max-w-7xl items-start justify-center">
         
         {/* PHYSICAL DEVICE */}
-        <div className="flex-1 max-w-[400px] w-full">
-            <div className="relative bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-6">
+        <div className="flex-shrink-0 w-full max-w-[400px] mx-auto md:mx-0">
+            <div className="relative bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-6 sticky top-8">
                 
                 {/* Header */}
                 <div className="flex justify-between items-center px-2">
@@ -289,44 +338,84 @@ export const HardwareSimulator: React.FC = () => {
             </div>
         </div>
 
-        {/* TEST PANEL */}
-        <div className="w-full max-w-[300px] bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
-            <h2 className="font-bold text-sm mb-4 flex items-center gap-2 text-neutral-400">
-                <Settings className="w-4 h-4" /> Simulation Controls
+        {/* TEST CARDS PANEL */}
+        <div className="flex-1 w-full bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white min-h-[500px]">
+            <h2 className="font-bold text-lg mb-2 flex items-center gap-2 text-white">
+                <Settings className="w-5 h-5" /> Test Cards
             </h2>
+            <p className="text-neutral-400 text-sm mb-6">
+                {deviceState === 'active' 
+                    ? `Showing ${enrolledStudents.length} students enrolled in active course.`
+                    : "Start a session to see enrolled student cards."}
+            </p>
 
-            <div className="space-y-4">
-                <div className="bg-neutral-900 p-3 rounded text-xs text-neutral-400 border border-neutral-700">
-                    <p className="font-bold text-neutral-300 mb-1">Instructions:</p>
-                    <ol className="list-decimal pl-4 space-y-1">
-                        <li>Press <span className="text-green-400">ENT</span> to start.</li>
-                        <li>Enter Staff ID using Numpad (Try <span className="text-white font-mono">SMAF/0001</span>).</li>
-                        <li>Press <span className="text-green-400">ENT</span>.</li>
-                        <li>Select Course (1-9).</li>
-                        <li>Tap a test card below.</li>
-                    </ol>
-                </div>
-
-                <div className="border-t border-neutral-700 pt-4">
-                    <label className="text-xs font-bold text-neutral-500 uppercase mb-3 block">Test Cards (Click to Tap)</label>
-                    <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        {students.length === 0 && <p className="text-xs text-neutral-600">No students loaded.</p>}
-                        {students.map(s => (
-                            <button 
-                                key={s.id}
-                                onClick={() => scanTag(s)}
-                                disabled={deviceState !== 'active'}
-                                className="w-full bg-neutral-700 hover:bg-neutral-600 p-2 rounded flex items-center gap-3 text-left disabled:opacity-50 transition-all active:scale-95"
-                            >
-                                <CreditCard className="w-4 h-4 text-neutral-400" />
-                                <div className="min-w-0">
-                                    <div className="text-xs font-bold truncate">{s.first_name} {s.last_name}</div>
-                                    <div className="text-[10px] text-neutral-400 font-mono truncate">{s.rfid_tag}</div>
-                                </div>
-                            </button>
-                        ))}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 gap-4 max-h-[70vh] overflow-y-auto pr-2 custom-scrollbar">
+                {deviceState === 'active' && enrolledStudents.length === 0 && (
+                    <div className="col-span-full text-center py-10 text-neutral-500 italic border border-dashed border-neutral-700 rounded-xl">
+                        No students enrolled in this course.
                     </div>
-                </div>
+                )}
+                
+                {deviceState !== 'active' && (
+                    <div className="col-span-full flex flex-col items-center justify-center py-12 text-neutral-500 gap-4 border border-dashed border-neutral-700 rounded-xl">
+                        <CreditCard className="w-12 h-12 opacity-20" />
+                        <p>Waiting for Session Start...</p>
+                    </div>
+                )}
+
+                {deviceState === 'active' && enrolledStudents.map(s => (
+                    <button 
+                        key={s.id}
+                        onClick={() => scanTag(s)}
+                        disabled={isScanningLock}
+                        className="relative bg-white text-slate-900 rounded-xl shadow-lg overflow-hidden group hover:-translate-y-1 transition-transform duration-200 text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {/* ID Card Header */}
+                        <div className="h-3 bg-blue-600 w-full"></div>
+                        
+                        <div className="p-4 flex gap-3">
+                            {/* Photo */}
+                            <div className="w-16 h-20 bg-slate-200 rounded-md shrink-0 overflow-hidden border border-slate-300">
+                                {s.photo_url ? (
+                                    <img src={s.photo_url} className="w-full h-full object-cover" />
+                                ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-slate-400 font-bold text-xl">
+                                        {s.first_name[0]}{s.last_name[0]}
+                                    </div>
+                                )}
+                            </div>
+                            
+                            {/* Details */}
+                            <div className="min-w-0 flex-1 flex flex-col justify-between">
+                                <div>
+                                    <h3 className="font-bold text-sm leading-tight truncate">{s.first_name} {s.last_name}</h3>
+                                    <p className="text-xs text-slate-500 font-mono mt-0.5">{s.student_id}</p>
+                                </div>
+                                
+                                <div className="flex items-end justify-between mt-2">
+                                     <div className="flex flex-col">
+                                         <span className="text-[8px] text-slate-400 uppercase font-bold">RFID TAG</span>
+                                         <span className="text-[10px] font-mono text-slate-700 tracking-wider">{s.rfid_tag?.slice(0,6)}...</span>
+                                     </div>
+                                     <Cpu className="w-6 h-6 text-yellow-500 opacity-80" />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Barcode Strip */}
+                        <div className="bg-slate-50 px-4 py-1 border-t border-slate-100 flex justify-between items-center">
+                            <Barcode className="w-16 h-4 text-slate-300" />
+                            <div className="text-[8px] font-bold text-blue-600 uppercase tracking-widest">STUDENT</div>
+                        </div>
+
+                        {/* Hover Overlay */}
+                        <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/10 transition-colors flex items-center justify-center">
+                             <div className="bg-white/90 backdrop-blur text-blue-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">
+                                 TAP TO SCAN
+                             </div>
+                        </div>
+                    </button>
+                ))}
             </div>
         </div>
       </div>
