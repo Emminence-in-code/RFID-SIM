@@ -12,7 +12,7 @@ import { StudentProfile } from "./pages/StudentProfile";
 import { StaffProfile } from "./pages/StaffProfile";
 import { ReportsPage } from "./pages/Reports";
 import { getSupabase, hasSupabaseConfig, initSupabase } from "./supabaseClient";
-import { Loader2 } from "lucide-react";
+import { Loader2, WifiOff } from "lucide-react";
 import { UserRole } from "./types";
 
 initSupabase();
@@ -30,6 +30,7 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
 
   useEffect(() => {
     const checkAuth = async () => {
@@ -41,21 +42,29 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
 
       const supabase = getSupabase();
       if (supabase) {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session) {
-          setAuthenticated(true);
-          // Strategy: Check if email exists in 'students' table. If yes, Student. Else, Staff.
-          const { data: student } = await supabase
-            .from('students')
-            .select('id')
-            .eq('email', session.user.email)
-            .single();
-
-          const role = student ? 'student' : 'staff';
-          setUserRole(role);
+        try {
+          const { data: { session }, error } = await supabase.auth.getSession();
+          if (error) throw error;
           
-          localStorage.setItem('user_role', role);
+          if (session) {
+            setAuthenticated(true);
+            // Strategy: Check if email exists in 'students' table. If yes, Student. Else, Staff.
+            const { data: student, error: roleError } = await supabase
+              .from('students')
+              .select('id')
+              .eq('email', session.user.email)
+              .single();
+
+            // If fetch fails here (e.g. 406), it might just mean not found, but we handle network errors in catch
+            
+            const role = student ? 'student' : 'staff';
+            setUserRole(role);
+            localStorage.setItem('user_role', role);
+          }
+        } catch (err) {
+          console.error("Auth check failed:", err);
+          // Only block access if it's a critical auth error, otherwise redirect to login might be safer
+          setConnectionError(true);
         }
       }
       setLoading(false);
@@ -69,6 +78,19 @@ const ProtectedRoute = ({ allowedRoles }: { allowedRoles: UserRole[] }) => {
         <Loader2 className="w-8 h-8 animate-spin text-primary-500" />
       </div>
     );
+  }
+
+  if (connectionError && !authenticated) {
+     return (
+        <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-600 p-4 text-center">
+            <WifiOff className="w-12 h-12 mb-4 text-slate-400" />
+            <h2 className="text-xl font-bold text-slate-900">Connection Error</h2>
+            <p className="mb-6 max-w-sm">Could not connect to the server. Please check your internet connection and reload.</p>
+            <button onClick={() => window.location.reload()} className="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 font-medium">
+                Retry Connection
+            </button>
+        </div>
+     );
   }
 
   if (!authenticated) return <Navigate to="/login" replace />;

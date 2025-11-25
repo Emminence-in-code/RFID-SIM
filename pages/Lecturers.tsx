@@ -6,6 +6,8 @@ import { Lecturer } from '../types';
 export const LecturersPage: React.FC = () => {
   const [lecturers, setLecturers] = useState<Lecturer[]>([]);
   const supabase = getSupabase();
+  const role = localStorage.getItem('user_role');
+  const isStaff = role === 'staff';
 
   const fetchLecturers = async () => {
     if (!supabase) return;
@@ -26,7 +28,7 @@ export const LecturersPage: React.FC = () => {
 
       <Card noPadding>
         <table className="min-w-full divide-y divide-slate-100">
-          <TableHeader headers={['Staff ID', 'Name', 'Email Address', 'Department']} />
+          <TableHeader headers={isStaff ? ['Staff ID', 'Name', 'Email Address', 'Department'] : ['Staff ID', 'Name', 'Department']} />
           <tbody className="bg-white divide-y divide-slate-50">
             {lecturers.map((lecturer) => (
               <tr key={lecturer.id} className="hover:bg-slate-50 transition-colors group">
@@ -39,7 +41,9 @@ export const LecturersPage: React.FC = () => {
                       <span className="text-sm font-bold text-slate-900">{lecturer.first_name} {lecturer.last_name}</span>
                     </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{lecturer.email}</td>
+                {isStaff && (
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{lecturer.email}</td>
+                )}
                 <td className="px-6 py-4 whitespace-nowrap">
                    <span className="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-600">
                      {lecturer.department}

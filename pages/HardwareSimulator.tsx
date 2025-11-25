@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, CreditCard, Play, Square, Settings, Grid, Delete } from 'lucide-react';
+import { Radio, CreditCard, Play, Square, Settings, Grid, Delete, WifiOff } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { Course, Lecturer, Student } from '../types';
 
@@ -12,8 +12,9 @@ export const HardwareSimulator: React.FC = () => {
   
   // Device State
   const [inputBuffer, setInputBuffer] = useState('');
-  const [deviceState, setDeviceState] = useState<'booting' | 'idle' | 'enter_id' | 'select_course' | 'active' | 'error'>('booting');
+  const [deviceState, setDeviceState] = useState<'booting' | 'idle' | 'enter_id' | 'select_course' | 'active' | 'error' | 'offline'>('booting');
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeCourseId, setActiveCourseId] = useState<string | null>(null);
   const [currentStaff, setCurrentStaff] = useState<Lecturer | null>(null);
   const [availableCourses, setAvailableCourses] = useState<Course[]>([]);
   
@@ -23,26 +24,42 @@ export const HardwareSimulator: React.FC = () => {
   // Init
   useEffect(() => {
     const init = async () => {
-      if (!supabase) return;
-      setTimeout(() => setLeds(prev => ({...prev, net: true})), 1000);
+      if (!supabase) {
+        setDeviceState('offline');
+        setOledLines(['> NO NETWORK', '> CHECK CONFIG']);
+        return;
+      }
       
-      const [cRes, sRes, sessionRes] = await Promise.all([
-        supabase.from('courses').select('*'),
-        supabase.from('students').select('*'),
-        supabase.from('sessions').select('*').eq('is_active', true).single()
-      ]);
+      try {
+        setTimeout(() => setLeds(prev => ({...prev, net: true})), 1000);
+        
+        const [cRes, sRes, sessionRes] = await Promise.all([
+          supabase.from('courses').select('*'),
+          supabase.from('students').select('*'),
+          supabase.from('sessions').select('*').eq('is_active', true).single()
+        ]);
 
-      if (cRes.data) setCourses(cRes.data as any);
-      if (sRes.data) setStudents(sRes.data as any);
+        if (cRes.error) throw cRes.error;
+        if (sRes.error) throw sRes.error;
 
-      if (sessionRes.data) {
-        // Resume session
-        setActiveSessionId(sessionRes.data.id);
-        setDeviceState('active');
-        setOledLines(['> SESSION ACTIVE', '> READY TO SCAN']);
-      } else {
-        setDeviceState('idle');
-        setOledLines(['> WELCOME', '> PRESS # TO START']);
+        if (cRes.data) setCourses(cRes.data as any);
+        if (sRes.data) setStudents(sRes.data as any);
+
+        if (sessionRes.data) {
+          // Resume session
+          setActiveSessionId(sessionRes.data.id);
+          setActiveCourseId(sessionRes.data.course_id);
+          setDeviceState('active');
+          setOledLines(['> SESSION ACTIVE', '> READY TO SCAN']);
+        } else {
+          setDeviceState('idle');
+          setOledLines(['> WELCOME', '> PRESS # TO START']);
+        }
+      } catch (e) {
+        console.error("Hardware Init Failed", e);
+        setDeviceState('offline');
+        setOledLines(['> NETWORK ERROR', '> RETRY LATER']);
+        setLeds(prev => ({...prev, net: false}));
       }
     };
     init();
@@ -56,6 +73,8 @@ export const HardwareSimulator: React.FC = () => {
   };
 
   const handleKeypad = async (key: string) => {
+    if (deviceState === 'offline') return;
+
     if (deviceState === 'idle') {
         if (key === '#') {
             setDeviceState('enter_id');
@@ -81,31 +100,36 @@ export const HardwareSimulator: React.FC = () => {
             }
             // Fetch Staff
             updateScreen(['VERIFYING ID...']);
-            const fullId = `SMAF/${inputBuffer}`;
-            const { data: staff } = await supabase!.from('lecturers').select('*').eq('staff_id', fullId).single();
-            
-            if (staff) {
-                setCurrentStaff(staff);
-                // Fetch courses for this staff
-                const { data: myCourses } = await supabase!.from('courses').select('*').eq('lecturer_id', staff.id);
-                if (myCourses && myCourses.length > 0) {
-                    setAvailableCourses(myCourses as any);
-                    setDeviceState('select_course');
-                    updateScreen(['SELECT COURSE (1-9):', ...myCourses.slice(0, 3).map((c, i) => `${i+1}. ${c.code}`)]);
+            try {
+                const fullId = `SMAF/${inputBuffer}`;
+                const { data: staff } = await supabase!.from('lecturers').select('*').eq('staff_id', fullId).single();
+                
+                if (staff) {
+                    setCurrentStaff(staff);
+                    // Fetch courses for this staff
+                    const { data: myCourses } = await supabase!.from('courses').select('*').eq('lecturer_id', staff.id);
+                    if (myCourses && myCourses.length > 0) {
+                        setAvailableCourses(myCourses as any);
+                        setDeviceState('select_course');
+                        updateScreen(['SELECT COURSE (1-9):', ...myCourses.slice(0, 3).map((c, i) => `${i+1}. ${c.code}`)]);
+                    } else {
+                        updateScreen(['NO COURSES FOUND', 'FOR THIS ID']);
+                        setTimeout(() => {
+                            setDeviceState('idle');
+                            updateScreen(['> WELCOME', '> PRESS # TO START']);
+                        }, 2000);
+                    }
                 } else {
-                    updateScreen(['NO COURSES FOUND', 'FOR THIS ID']);
+                    updateScreen(['ID NOT FOUND']);
                     setTimeout(() => {
+                        setInputBuffer('');
                         setDeviceState('idle');
                         updateScreen(['> WELCOME', '> PRESS # TO START']);
                     }, 2000);
                 }
-            } else {
-                updateScreen(['ID NOT FOUND']);
-                setTimeout(() => {
-                    setInputBuffer('');
-                    setDeviceState('idle');
-                    updateScreen(['> WELCOME', '> PRESS # TO START']);
-                }, 2000);
+            } catch (e) {
+                updateScreen(['> NET ERROR']);
+                setTimeout(() => setDeviceState('idle'), 2000);
             }
         } else if (/^\d$/.test(key)) {
              if (inputBuffer.length < 4) {
@@ -138,20 +162,26 @@ export const HardwareSimulator: React.FC = () => {
     if (!supabase || !currentStaff) return;
     updateScreen(['> INITIALIZING...', '> CONTACTING DB']);
     
-    // Stop previous
-    await supabase.from('sessions').update({ is_active: false }).eq('is_active', true);
-    
-    const { data } = await supabase.from('sessions').insert({
-        course_id: courseId,
-        lecturer_id: currentStaff.id,
-        start_time: new Date().toISOString(),
-        is_active: true
-    }).select().single();
+    try {
+        // Stop previous
+        await supabase.from('sessions').update({ is_active: false }).eq('is_active', true);
+        
+        const { data } = await supabase.from('sessions').insert({
+            course_id: courseId,
+            lecturer_id: currentStaff.id,
+            start_time: new Date().toISOString(),
+            is_active: true
+        }).select().single();
 
-    if (data) {
-        setActiveSessionId(data.id);
-        setDeviceState('active');
-        updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
+        if (data) {
+            setActiveSessionId(data.id);
+            setActiveCourseId(courseId);
+            setDeviceState('active');
+            updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
+        }
+    } catch (e) {
+        updateScreen(['> ERROR STARTING', '> RETRYING...']);
+        setTimeout(() => setDeviceState('idle'), 2000);
     }
   };
 
@@ -160,12 +190,16 @@ export const HardwareSimulator: React.FC = () => {
     updateScreen(['> TERMINATING...']);
     await supabase.from('sessions').update({ is_active: false, end_time: new Date().toISOString() }).eq('id', activeSessionId);
     setActiveSessionId(null);
+    setActiveCourseId(null);
     setDeviceState('idle');
     updateScreen(['> SESSION ENDED', '> PRESS # TO START']);
   };
 
   const scanTag = async (student: Student) => {
-    if (!supabase || deviceState !== 'active' || !activeSessionId) return;
+    if (!supabase || deviceState !== 'active' || !activeSessionId || !activeCourseId) {
+        if (!activeCourseId) updateScreen(['> ERROR: NO COURSE', '> RESTART SESSION']);
+        return;
+    }
     
     blinkRead();
     updateScreen(['> READING TAG...', `> ID: ${student.rfid_tag?.slice(0,6) || 'UNK'}`]);
@@ -173,36 +207,42 @@ export const HardwareSimulator: React.FC = () => {
     // Fake delay
     await new Promise(r => setTimeout(r, 600));
 
-    const { error } = await supabase.from('attendance_logs').insert({
-        session_id: activeSessionId,
-        student_id: student.id,
-        status: 'present'
-    });
+    try {
+        const { error } = await supabase.from('attendance_logs').insert({
+            session_id: activeSessionId,
+            student_id: student.id,
+            course_id: activeCourseId,
+            status: 'present'
+        });
 
-    if (error) {
-        if (error.code === '23505') {
-             updateScreen(['> ERROR: DUPLICATE', '> ALREADY LOGGED']);
+        if (error) {
+            if (error.code === '23505') {
+                updateScreen(['> ERROR: DUPLICATE', '> ALREADY LOGGED']);
+            } else {
+                console.error(error);
+                updateScreen(['> SYS ERROR', `> ${error.code || 'UNKNOWN'}`]);
+            }
+            // Recover
+            setTimeout(() => {
+            updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+            }, 1500);
         } else {
-             updateScreen(['> SYS ERROR', `> ${error.code}`]);
+            updateScreen(['> ACCESS GRANTED', `> ${student.first_name}`]);
+            setTimeout(() => {
+            updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
+            }, 1500);
         }
-        // Recover
-        setTimeout(() => {
-          updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
-        }, 1500);
-    } else {
-        updateScreen(['> ACCESS GRANTED', `> ${student.first_name}`]);
-        setTimeout(() => {
-          updateScreen(['> SESSION ACTIVE', '> READY TO SCAN']);
-        }, 1500);
+    } catch (e) {
+        updateScreen(['> CONNECTION LOST']);
     }
   };
 
   return (
     <div className="min-h-screen bg-neutral-900 flex items-center justify-center font-sans p-8">
-      <div className="flex gap-12 w-full max-w-6xl items-start justify-center">
+      <div className="flex flex-col md:flex-row gap-12 w-full max-w-6xl items-center md:items-start justify-center">
         
         {/* PHYSICAL DEVICE */}
-        <div className="flex-1 max-w-[400px]">
+        <div className="flex-1 max-w-[400px] w-full">
             <div className="relative bg-neutral-800 rounded-[3rem] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.8),inset_0_2px_4px_rgba(255,255,255,0.1)] p-8 border border-neutral-700 flex flex-col gap-6">
                 
                 {/* Header */}
@@ -214,7 +254,7 @@ export const HardwareSimulator: React.FC = () => {
                     <div className="font-mono font-bold text-neutral-600 tracking-widest text-xs">RFID-TERMINAL</div>
                     <div className="flex gap-2 items-center">
                          <div className="text-[10px] font-bold text-neutral-500">NET</div>
-                         <div className={`w-2 h-2 rounded-full ${leds.net ? 'bg-blue-500 shadow-[0_0_8px_#3b82f6]' : 'bg-neutral-900'}`}></div>
+                         <div className={`w-2 h-2 rounded-full ${leds.net ? 'bg-blue-500 shadow-[0_0_8px_#3b82f6]' : 'bg-red-500'}`}></div>
                     </div>
                 </div>
 
@@ -250,7 +290,7 @@ export const HardwareSimulator: React.FC = () => {
         </div>
 
         {/* TEST PANEL */}
-        <div className="w-72 bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
+        <div className="w-full max-w-[300px] bg-neutral-800 p-6 rounded-2xl border border-neutral-700 text-white h-fit">
             <h2 className="font-bold text-sm mb-4 flex items-center gap-2 text-neutral-400">
                 <Settings className="w-4 h-4" /> Simulation Controls
             </h2>
@@ -270,6 +310,7 @@ export const HardwareSimulator: React.FC = () => {
                 <div className="border-t border-neutral-700 pt-4">
                     <label className="text-xs font-bold text-neutral-500 uppercase mb-3 block">Test Cards (Click to Tap)</label>
                     <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                        {students.length === 0 && <p className="text-xs text-neutral-600">No students loaded.</p>}
                         {students.map(s => (
                             <button 
                                 key={s.id}

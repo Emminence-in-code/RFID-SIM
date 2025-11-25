@@ -28,17 +28,21 @@ export const LiveConsole: React.FC = () => {
     const fetchInit = async () => {
       if (!supabase) return;
       
-      const { data: session } = await supabase
-        .from('sessions')
-        .select('*, course:courses(*, lecturer:lecturers(*))')
-        .eq('is_active', true)
-        .order('start_time', { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (session) {
-        setActiveSession(session as any);
-        fetchSessionLogs(session.id);
+      try {
+        const { data: session } = await supabase
+          .from('sessions')
+          .select('*, course:courses(*, lecturer:lecturers(*))')
+          .eq('is_active', true)
+          .order('start_time', { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (session) {
+          setActiveSession(session as any);
+          fetchSessionLogs(session.id);
+        }
+      } catch (e) {
+        console.error("Live Console init failed", e);
       }
     };
     fetchInit();
@@ -98,12 +102,14 @@ export const LiveConsole: React.FC = () => {
   // --- Logic ---
   const fetchSessionLogs = async (sessionId: string) => {
     if(!supabase) return;
-    const { data } = await supabase
-      .from('attendance_logs')
-      .select('*, student:students(*)')
-      .eq('session_id', sessionId)
-      .order('timestamp', { ascending: false });
-    if(data) setAttendees(data as any);
+    try {
+        const { data } = await supabase
+        .from('attendance_logs')
+        .select('*, student:students(*)')
+        .eq('session_id', sessionId)
+        .order('timestamp', { ascending: false });
+        if(data) setAttendees(data as any);
+    } catch(e) { console.error(e); }
   };
 
   const handleNewScan = (log: AttendanceLog) => {

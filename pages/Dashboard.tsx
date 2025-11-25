@@ -41,12 +41,42 @@ export const Dashboard: React.FC = () => {
 
         setStaffStats({ students: sCount || 0, lecturers: lCount || 0, courses: cCount || 0, todayLogs: todayCount || 0 });
         
-        // Mock Chart Data for visualization
-        setChartData([
-          { name: 'Mon', present: 40, late: 5 }, { name: 'Tue', present: 35, late: 8 },
-          { name: 'Wed', present: 45, late: 2 }, { name: 'Thu', present: 30, late: 10 },
-          { name: 'Fri', present: 42, late: 3 },
-        ]);
+        // --- Real Attendance Trends (Last 7 Days) ---
+        const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const last7Days = [...Array(7)].map((_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() - (6 - i));
+            d.setHours(0,0,0,0);
+            return d;
+        });
+
+        // Initialize Map
+        const statsMap: Record<string, any> = {};
+        last7Days.forEach(date => {
+            statsMap[date.toLocaleDateString()] = {
+                name: days[date.getDay()],
+                present: 0,
+                late: 0,
+                dateStr: date.toLocaleDateString()
+            };
+        });
+
+        const { data: recentLogs } = await supabase
+            .from('attendance_logs')
+            .select('timestamp, status')
+            .gte('timestamp', last7Days[0].toISOString());
+
+        if (recentLogs) {
+            recentLogs.forEach((log: any) => {
+                const dateKey = new Date(log.timestamp).toLocaleDateString();
+                if (statsMap[dateKey]) {
+                    if (log.status === 'present') statsMap[dateKey].present++;
+                    else if (log.status === 'late') statsMap[dateKey].late++;
+                }
+            });
+        }
+
+        setChartData(Object.values(statsMap));
 
       } else {
         // --- STUDENT DASHBOARD DATA ---
@@ -78,7 +108,7 @@ export const Dashboard: React.FC = () => {
     fetchData();
   }, [supabase, isStaff]);
 
-  if (loading) return <div className="text-slate-500">Loading dashboard...</div>;
+  if (loading) return <div className="p-8 text-center text-slate-500 font-medium">Loading dashboard data...</div>;
 
   // --- RENDER STAFF ---
   if (isStaff) {
@@ -97,7 +127,7 @@ export const Dashboard: React.FC = () => {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
            {cards.map((c, i) => (
-             <div key={i} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
+             <div key={i} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between transition-transform hover:-translate-y-1">
                 <div>
                    <p className="text-3xl font-black text-slate-800">{c.value}</p>
                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">{c.label}</p>
@@ -108,17 +138,39 @@ export const Dashboard: React.FC = () => {
              </div>
            ))}
         </div>
-        <Card className="h-[400px] p-6">
-           <h3 className="text-lg font-bold mb-6">Attendance Trends (Weekly)</h3>
-           <ResponsiveContainer width="100%" height="100%">
-             <AreaChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
-                <Tooltip />
-                <Area type="monotone" dataKey="present" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.1} />
-             </AreaChart>
-           </ResponsiveContainer>
+        <Card className="p-6">
+           <div className="flex justify-between items-center mb-6">
+               <h3 className="text-lg font-bold">Attendance Trends (Last 7 Days)</h3>
+               <div className="text-xs font-bold px-2 py-1 bg-primary-50 text-primary-600 rounded">Real-time Data</div>
+           </div>
+           
+           <div className="h-80 w-full">
+             <ResponsiveContainer width="100%" height="100%">
+               <AreaChart data={chartData}>
+                  <defs>
+                    <linearGradient id="colorPresent" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.8}/>
+                      <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} dy={10} />
+                  <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 12}} />
+                  <Tooltip 
+                    contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)'}} 
+                  />
+                  <Area 
+                    type="monotone" 
+                    dataKey="present" 
+                    stroke="#8b5cf6" 
+                    strokeWidth={3}
+                    fillOpacity={1} 
+                    fill="url(#colorPresent)" 
+                    animationDuration={1500}
+                  />
+               </AreaChart>
+             </ResponsiveContainer>
+           </div>
         </Card>
       </div>
     );

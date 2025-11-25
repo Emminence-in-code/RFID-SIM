@@ -39,9 +39,13 @@ export const initSupabase = (config?: SupabaseConfig): SupabaseClient => {
   if (!supabaseInstance) {
     const conf = config || getEnvConfig();
     
-    if (conf.url && conf.key) {
+    // Sanitize inputs
+    const url = conf.url?.trim();
+    const key = conf.key?.trim();
+
+    if (url && key) {
       try {
-        supabaseInstance = createClient(conf.url, conf.key);
+        supabaseInstance = createClient(url, key);
         console.log("Supabase client initialized successfully.");
       } catch (e) {
         console.error("Failed to initialize Supabase client:", e);
@@ -60,7 +64,9 @@ export const hasSupabaseConfig = (): boolean => {
 };
 
 export const saveSupabaseConfig = (config: SupabaseConfig) => {
-  supabaseInstance = createClient(config.url, config.key);
+  if (config.url && config.key) {
+      supabaseInstance = createClient(config.url.trim(), config.key.trim());
+  }
 };
 
 export const clearSupabaseConfig = () => {
