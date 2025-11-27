@@ -123,7 +123,7 @@ export const sendSessionStartEmail = async (emails: string[], courseName: string
 
   return sendCustomEmail({
     recipient_list: emails,
-    subject: `Attendance Session Started: ${courseName}`,
+    subject: `New Session Started: ${courseName}`,
     content: htmlContent,
     is_html: true,
     context: {
