@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, TableHeader } from '../components/ui';
 import { getSupabase } from '../supabaseClient';
 import { Lecturer } from '../types';
+import { User } from 'lucide-react';
 
 export const LecturersPage: React.FC = () => {
   const [lecturers, setLecturers] = useState<Lecturer[]>([]);
@@ -11,8 +12,13 @@ export const LecturersPage: React.FC = () => {
 
   const fetchLecturers = async () => {
     if (!supabase) return;
-    const { data } = await supabase.from('lecturers').select('*');
-    if (data) setLecturers(data);
+    // Explicitly select only public fields, EXCLUDING staff_id to ensure privacy
+    const { data } = await supabase
+      .from('lecturers')
+      .select('id, first_name, last_name, email, department, photo_url')
+      .order('last_name');
+      
+    if (data) setLecturers(data as any);
   };
 
   useEffect(() => { fetchLecturers(); }, []);
@@ -28,15 +34,18 @@ export const LecturersPage: React.FC = () => {
 
       <Card noPadding>
         <table className="min-w-full divide-y divide-slate-100">
-          <TableHeader headers={isStaff ? ['Staff ID', 'Name', 'Email Address', 'Department'] : ['Staff ID', 'Name', 'Department']} />
+          <TableHeader headers={isStaff ? ['Name', 'Email Address', 'Department'] : ['Name', 'Department']} />
           <tbody className="bg-white divide-y divide-slate-50">
             {lecturers.map((lecturer) => (
               <tr key={lecturer.id} className="hover:bg-slate-50 transition-colors group">
-                 <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-500">{lecturer.staff_id || 'N/A'}</td>
                 <td className="px-6 py-4 whitespace-nowrap">
                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-bold mr-3">
-                        {lecturer.first_name.charAt(0)}{lecturer.last_name.charAt(0)}
+                      <div className="h-10 w-10 rounded-full bg-slate-200 border-2 border-white shadow-sm flex items-center justify-center text-xs font-bold mr-3 overflow-hidden">
+                        {lecturer.photo_url ? (
+                            <img src={lecturer.photo_url} className="w-full h-full object-cover" alt="" />
+                        ) : (
+                            <span className="text-slate-500 text-lg"><User className="w-5 h-5" /></span>
+                        )}
                       </div>
                       <span className="text-sm font-bold text-slate-900">{lecturer.first_name} {lecturer.last_name}</span>
                     </div>
@@ -45,7 +54,7 @@ export const LecturersPage: React.FC = () => {
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">{lecturer.email}</td>
                 )}
                 <td className="px-6 py-4 whitespace-nowrap">
-                   <span className="px-2 py-1 rounded text-xs font-medium bg-slate-100 text-slate-600">
+                   <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200">
                      {lecturer.department}
                    </span>
                 </td>

@@ -1,8 +1,10 @@
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Lock, Mail, AlertCircle, ArrowRight, Radio, User, CreditCard, Briefcase, Building, KeyRound, ArrowLeft } from 'lucide-react';
 import { Button, Input } from '../components/ui';
 import { getSupabase } from '../supabaseClient';
+import { sendWelcomeEmail } from '../utils/emailService';
 
 export const AuthPage: React.FC = () => {
   const [role, setRole] = useState<'student' | 'staff'>('student');
@@ -73,9 +75,14 @@ export const AuthPage: React.FC = () => {
                 });
                 if (dbError) {
                     console.error(dbError);
-                    // Note: If DB insert fails, the Auth user still exists. 
-                    // In a prod app, you'd want a transaction or cleanup.
                     throw new Error("Failed to create staff profile. Staff ID might be taken.");
+                }
+
+                // Send Custom Welcome Email
+                try {
+                  await sendWelcomeEmail(email, fullName, 'staff');
+                } catch (emailErr) {
+                  console.error("Failed to send welcome email", emailErr);
                 }
             }
             alert("Account created! Please check your email to confirm your account.");
@@ -123,6 +130,13 @@ export const AuthPage: React.FC = () => {
             if (dbError) {
               console.error(dbError);
               throw new Error("Failed to create student profile. Matric number might be taken.");
+            }
+
+            // Send Custom Welcome Email
+            try {
+              await sendWelcomeEmail(email, fullName, 'student');
+            } catch (emailErr) {
+              console.error("Failed to send welcome email", emailErr);
             }
           }
           alert("Account created! Please check your email to confirm your account.");
@@ -371,7 +385,7 @@ export const AuthPage: React.FC = () => {
               </>
             )}
             
-            {/* Submit Button (Hidden in Forgot Password mode as it has its own) */}
+            {/* Submit Button */}
             {authMode !== 'forgot_password' && (
                 <div className="pt-4">
                 <Button type="submit" className="w-full py-3" isLoading={loading}>

@@ -1,8 +1,10 @@
+
 import React, { useState, useEffect } from 'react';
 import { getSupabase } from '../supabaseClient';
 import { Card, Button, TableHeader, Input } from '../components/ui';
 import { Course } from '../types';
-import { BarChart, FileText, Download, AlertCircle } from 'lucide-react';
+import { BarChart, FileText, Download, AlertCircle, Mail } from 'lucide-react';
+import { sendReportEmail } from '../utils/emailService';
 
 export const ReportsPage: React.FC = () => {
   const supabase = getSupabase();
@@ -15,6 +17,7 @@ export const ReportsPage: React.FC = () => {
 
   const [reportData, setReportData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [sendingEmail, setSendingEmail] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -81,8 +84,6 @@ export const ReportsPage: React.FC = () => {
         }
 
         // 3. Batch fetch all attendance logs for these sessions
-        // We fetch only logs where status is 'present' or 'late' (assuming these count as attended)
-        // If you want to count late as distinct, we can fetch status too.
         let logs: any[] = [];
         if (sessionIds.length > 0) {
              const { data: logData, error: logError } = await supabase
@@ -97,11 +98,8 @@ export const ReportsPage: React.FC = () => {
 
         // 4. Aggregate Data in Memory
         const report = enrollments.map((e: any) => {
-            // Count logs for this student
-            // We count 'present' and 'late' as attended. 'absent' logs (if they exist) are ignored.
             const studentLogs = logs.filter(l => l.student_id === e.student_id && ['present', 'late'].includes(l.status));
             const attendedCount = studentLogs.length;
-            
             const percentage = Math.round((attendedCount / totalSessions) * 100);
 
             return {
@@ -150,6 +148,31 @@ export const ReportsPage: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleEmailReport = async () => {
+    if (reportData.length === 0 || !supabase) return;
+    setSendingEmail(true);
+    
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user?.email) throw new Error("No user email found");
+
+      const courseName = courses.find(c => c.id === selectedCourseId)?.code || 'Unknown Course';
+      const totalStudents = reportData.length;
+      const totalAttended = reportData.filter(r => r.attended > 0).length; // Just a simple metric for the email body
+
+      await sendReportEmail(user.email, courseName, {
+        total: totalStudents,
+        attended: totalAttended,
+        date: new Date().toLocaleDateString()
+      });
+      alert(`Report sent to ${user.email}`);
+    } catch (e: any) {
+      alert("Failed to send email: " + e.message);
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   return (
@@ -216,9 +239,14 @@ export const ReportsPage: React.FC = () => {
                       <FileText className="w-4 h-4 text-slate-400" />
                       Results ({reportData.length} students)
                   </h3>
-                  <Button variant="secondary" onClick={exportCSV} className="py-1 px-3 h-8 text-xs">
-                      <Download className="w-3 h-3 mr-1" /> Export CSV
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button variant="secondary" onClick={handleEmailReport} isLoading={sendingEmail} className="py-1 px-3 h-8 text-xs">
+                        <Mail className="w-3 h-3 mr-1" /> Email Report
+                    </Button>
+                    <Button variant="secondary" onClick={exportCSV} className="py-1 px-3 h-8 text-xs">
+                        <Download className="w-3 h-3 mr-1" /> Export CSV
+                    </Button>
+                  </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-slate-100">

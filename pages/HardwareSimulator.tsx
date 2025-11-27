@@ -1,7 +1,9 @@
+
 import React, { useState, useEffect } from 'react';
 import { Radio, CreditCard, Play, Square, Settings, Grid, Delete, WifiOff, Cpu, Barcode } from 'lucide-react';
 import { getSupabase } from '../supabaseClient';
 import { Course, Lecturer, Student } from '../types';
+import { sendSessionStartEmail } from '../utils/emailService';
 
 export const HardwareSimulator: React.FC = () => {
   const supabase = getSupabase();
@@ -200,10 +202,40 @@ export const HardwareSimulator: React.FC = () => {
             setActiveSessionId(data.id);
             setActiveCourseId(courseId);
             setDeviceState('active');
-            updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
             
             // Filter students for this course
-            fetchEnrollments(courseId, allStudents);
+            const course = availableCourses.find(c => c.id === courseId);
+            updateScreen(['> SESSION STARTED', '> READY TO SCAN', '> PRESS * TO END']);
+
+            // Email Notification Logic
+            updateScreen(['> NOTIFYING CLASS...', '> SENDING EMAILS']);
+            
+            const { data: enrollData } = await supabase
+                .from('enrollments')
+                .select('student_id')
+                .eq('course_id', courseId);
+            
+            if (enrollData) {
+                const enrolledIds = new Set(enrollData.map(e => e.student_id));
+                const enrolledList = allStudents.filter(s => enrolledIds.has(s.id));
+                setEnrolledStudents(enrolledList);
+
+                // Send Emails
+                const emailList = enrolledList.map(s => s.email).filter(e => e);
+                if (emailList.length > 0 && course) {
+                    sendSessionStartEmail(
+                        emailList, 
+                        `${course.code} - ${course.name}`, 
+                        `${currentStaff.first_name} ${currentStaff.last_name}`
+                    ).catch(e => console.error("Failed to send session notifications", e));
+                }
+            }
+
+            // Return to ready state after short delay for email message
+            setTimeout(() => {
+                updateScreen(['> SESSION ACTIVE', '> READY TO SCAN', '> PRESS * TO END']);
+            }, 1500);
+
         }
     } catch (e) {
         updateScreen(['> ERROR STARTING', '> RETRYING...']);
